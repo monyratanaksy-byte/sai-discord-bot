@@ -1,0 +1,19 @@
+{
+  "name": "sai-discord-bot",
+  "version": "1.0.0",
+  "description": "S.A.I Discord bot with join-to-create voice rooms, slash commands, and prefix commands.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "deploy:commands": "node scripts/deploy-commands.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3",
+    "dotenv": "^16.5.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
