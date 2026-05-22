@@ -28,6 +28,37 @@ export const slashCommands = [
         .setRequired(false),
     ),
   new SlashCommandBuilder()
+    .setName('coords')
+    .setDescription('Convert Minecraft coordinates between the Overworld and Nether.')
+    .addStringOption((option) =>
+      option
+        .setName('from')
+        .setDescription('The dimension your coordinates are currently in.')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Overworld to Nether', value: 'overworld' },
+          { name: 'Nether to Overworld', value: 'nether' },
+        ),
+    )
+    .addNumberOption((option) =>
+      option
+        .setName('x')
+        .setDescription('X coordinate.')
+        .setRequired(true),
+    )
+    .addNumberOption((option) =>
+      option
+        .setName('y')
+        .setDescription('Y coordinate.')
+        .setRequired(true),
+    )
+    .addNumberOption((option) =>
+      option
+        .setName('z')
+        .setDescription('Z coordinate.')
+        .setRequired(true),
+    ),
+  new SlashCommandBuilder()
     .setName('admin')
     .setDescription('S.A.I admin utilities.')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -78,6 +109,11 @@ export async function runSlashCommand(interaction) {
       : null;
 
     await interaction.reply({ embeds: [buildProfileEmbed(target, member)] });
+    return;
+  }
+
+  if (interaction.commandName === 'coords') {
+    await interaction.reply({ embeds: [buildCoordsEmbed(interaction)] });
     return;
   }
 
@@ -205,6 +241,77 @@ function buildProfileEmbed(user, member) {
       },
     )
     .setImage(user.bannerURL?.({ size: 1024 }) || null);
+}
+
+function buildCoordsEmbed(interaction) {
+  const from = interaction.options.getString('from', true);
+  const input = {
+    x: interaction.options.getNumber('x', true),
+    y: interaction.options.getNumber('y', true),
+    z: interaction.options.getNumber('z', true),
+  };
+  const scale = from === 'overworld' ? 1 / 8 : 8;
+  const sourceName = from === 'overworld' ? 'Overworld' : 'Nether';
+  const targetName = from === 'overworld' ? 'Nether' : 'Overworld';
+  const exact = {
+    x: input.x * scale,
+    y: input.y,
+    z: input.z * scale,
+  };
+  const block = {
+    x: Math.round(exact.x),
+    y: Math.round(exact.y),
+    z: Math.round(exact.z),
+  };
+  const sourceChunk = getChunkCoords(input);
+  const targetChunk = getChunkCoords(block);
+
+  return new EmbedBuilder()
+    .setColor(from === 'overworld' ? 0x2ecc71 : 0xe74c3c)
+    .setTitle(`Minecraft Coordinates: ${sourceName} -> ${targetName}`)
+    .addFields(
+      {
+        name: `${sourceName} input`,
+        value: formatCoordLine(input),
+        inline: false,
+      },
+      {
+        name: `${targetName} exact`,
+        value: formatCoordLine(exact),
+        inline: false,
+      },
+      {
+        name: 'Recommended block',
+        value: formatCoordLine(block),
+        inline: false,
+      },
+      {
+        name: 'Chunk',
+        value: `Source: \`${sourceChunk.x}, ${sourceChunk.z}\`\nTarget: \`${targetChunk.x}, ${targetChunk.z}\``,
+        inline: true,
+      },
+      {
+        name: 'Scale',
+        value: from === 'overworld' ? '`X/Z / 8`' : '`X/Z * 8`',
+        inline: true,
+      },
+    )
+    .setFooter({ text: 'Y does not scale between dimensions. Portal linking uses X/Z distance.' });
+}
+
+function getChunkCoords(coords) {
+  return {
+    x: Math.floor(coords.x / 16),
+    z: Math.floor(coords.z / 16),
+  };
+}
+
+function formatCoordLine(coords) {
+  return `\`X ${formatCoord(coords.x)} | Y ${formatCoord(coords.y)} | Z ${formatCoord(coords.z)}\``;
+}
+
+function formatCoord(value) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
 async function runAdminCommand(interaction) {

@@ -120,6 +120,7 @@ Slash commands:
 - `/ping`
 - `/userinfo [user]`
 - `/profile [user]`
+- `/coords from x y z`
 - `/admin status`
 - `/admin config`
 
