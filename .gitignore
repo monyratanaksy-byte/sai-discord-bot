@@ -2,6 +2,9 @@ node_modules/
 .env
 .env.*
 !.env.example
+*.zip
+sai-discord-bot-wisebyte/
+sai-discord-bot-upload/
 npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*

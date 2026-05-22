@@ -1,6 +1,7 @@
 import {
   ApplicationCommandOptionType,
   EmbedBuilder,
+  PermissionFlagsBits,
   SlashCommandBuilder,
 } from 'discord.js';
 
@@ -25,6 +26,20 @@ export const slashCommands = [
         .setName('user')
         .setDescription('The user profile to show.')
         .setRequired(false),
+    ),
+  new SlashCommandBuilder()
+    .setName('admin')
+    .setDescription('S.A.I admin utilities.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('status')
+        .setDescription('Show bot runtime and server status.'),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('config')
+        .setDescription('Show the active join-to-create configuration.'),
     ),
 ].map((command) => command.toJSON());
 
@@ -63,6 +78,11 @@ export async function runSlashCommand(interaction) {
       : null;
 
     await interaction.reply({ embeds: [buildProfileEmbed(target, member)] });
+    return;
+  }
+
+  if (interaction.commandName === 'admin') {
+    await runAdminCommand(interaction);
   }
 }
 
@@ -185,4 +205,60 @@ function buildProfileEmbed(user, member) {
       },
     )
     .setImage(user.bannerURL?.({ size: 1024 }) || null);
+}
+
+async function runAdminCommand(interaction) {
+  const member = interaction.member;
+  const isAdmin =
+    typeof member?.permissions?.has === 'function' &&
+    member.permissions.has(PermissionFlagsBits.Administrator);
+
+  if (!isAdmin) {
+    await interaction.reply({
+      content: 'Administrator permission is required for this command.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const subcommand = interaction.options.getSubcommand();
+
+  if (subcommand === 'status') {
+    const uptimeSeconds = Math.floor(interaction.client.uptime / 1000);
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x57f287)
+          .setTitle('S.A.I Admin Status')
+          .addFields(
+            { name: 'Bot', value: interaction.client.user.tag, inline: true },
+            { name: 'Servers', value: String(interaction.client.guilds.cache.size), inline: true },
+            { name: 'Uptime', value: `${uptimeSeconds}s`, inline: true },
+          ),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (subcommand === 'config') {
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x5865f2)
+          .setTitle('S.A.I Active Config')
+          .addFields(
+            {
+              name: 'Join-to-create channel',
+              value: process.env.JOIN_TO_CREATE_CHANNEL_ID
+                ? `<#${process.env.JOIN_TO_CREATE_CHANNEL_ID}>`
+                : 'Not configured',
+              inline: false,
+            },
+            { name: 'Prefix', value: process.env.PREFIX || 's!', inline: true },
+          ),
+      ],
+      ephemeral: true,
+    });
+  }
 }

@@ -133,6 +133,16 @@ export async function handleVoiceButton(interaction) {
           ),
         ),
     );
+    return;
+  }
+
+  if (interaction.customId === 'voice_permit') {
+    await showUserAccessModal(interaction, room, 'permit');
+    return;
+  }
+
+  if (interaction.customId === 'voice_deny') {
+    await showUserAccessModal(interaction, room, 'deny');
   }
 }
 
@@ -178,6 +188,48 @@ export async function handleVoiceModal(interaction) {
     await room.channel.setUserLimit(limit, 'S.A.I room owner changed the limit.');
     await interaction.reply({
       content: limit === 0 ? 'User limit removed.' : `User limit set to ${limit}.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (modalAction === 'voice_permit_modal' || modalAction === 'voice_deny_modal') {
+    const rawUser = interaction.fields.getTextInputValue('user').trim();
+    const userId = extractUserId(rawUser);
+    const member = userId
+      ? await interaction.guild.members.fetch(userId).catch(() => null)
+      : null;
+
+    if (!member) {
+      await interaction.reply({
+        content: 'Could not find that user. Use a mention or user ID.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (modalAction === 'voice_permit_modal') {
+      await room.channel.permissionOverwrites.edit(member.id, {
+        ViewChannel: true,
+        Connect: true,
+      });
+      await interaction.reply({
+        content: `${member} can now see and join this room.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    await room.channel.permissionOverwrites.edit(member.id, {
+      Connect: false,
+    });
+
+    if (member.voice.channelId === room.channel.id) {
+      await member.voice.disconnect('S.A.I room owner removed access.').catch(() => {});
+    }
+
+    await interaction.reply({
+      content: `${member} can no longer join this room.`,
       ephemeral: true,
     });
   }
@@ -241,6 +293,10 @@ async function sendControlPanel(channel, ownerId) {
       button('voice_claim', 'Claim', ButtonStyle.Success),
       button('voice_delete', 'Delete', ButtonStyle.Danger),
     ),
+    new ActionRowBuilder().addComponents(
+      button('voice_permit', 'Allow User', ButtonStyle.Success),
+      button('voice_deny', 'Deny User', ButtonStyle.Danger),
+    ),
   ];
 
   if (typeof channel.send === 'function') {
@@ -250,6 +306,30 @@ async function sendControlPanel(channel, ownerId) {
 
 function button(customId, label, style) {
   return new ButtonBuilder().setCustomId(customId).setLabel(label).setStyle(style);
+}
+
+async function showUserAccessModal(interaction, room, action) {
+  await interaction.showModal(
+    new ModalBuilder()
+      .setCustomId(`voice_${action}_modal:${room.channel.id}`)
+      .setTitle(action === 'permit' ? 'Allow User To Join' : 'Deny User From Joining')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('user')
+            .setLabel('User mention or user ID')
+            .setStyle(TextInputStyle.Short)
+            .setMinLength(2)
+            .setMaxLength(40)
+            .setRequired(true),
+        ),
+      ),
+  );
+}
+
+function extractUserId(value) {
+  const match = value.match(/\d{17,20}/);
+  return match?.[0] || null;
 }
 
 function getRoomForInteraction(interaction) {

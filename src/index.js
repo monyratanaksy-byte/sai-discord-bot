@@ -3,9 +3,11 @@ import {
   Events,
   GatewayIntentBits,
   Partials,
+  REST,
+  Routes,
 } from 'discord.js';
 import { config, requireConfig } from './config.js';
-import { runPrefixCommand, runSlashCommand } from './commands.js';
+import { runPrefixCommand, runSlashCommand, slashCommands } from './commands.js';
 import {
   handleVoiceButton,
   handleVoiceModal,
@@ -28,6 +30,9 @@ const client = new Client({
 
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`S.A.I is online as ${readyClient.user.tag}`);
+  registerGuildCommands().catch((error) => {
+    console.error('Slash command auto-registration failed:', error);
+  });
 });
 
 client.on(Events.VoiceStateUpdate, handleVoiceStateUpdate);
@@ -70,3 +75,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.login(config.token);
+
+async function registerGuildCommands() {
+  if (!config.clientId || !config.guildId) {
+    console.log('Slash command auto-registration skipped: CLIENT_ID or GUILD_ID missing.');
+    return;
+  }
+
+  const rest = new REST({ version: '10' }).setToken(config.token);
+  await rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), {
+    body: slashCommands,
+  });
+  console.log(`Registered ${slashCommands.length} slash commands for guild ${config.guildId}.`);
+}

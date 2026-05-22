@@ -76,6 +76,43 @@ PREFIX=s!
 
 Never commit your real `.env` file to GitHub. Only `.env.example` should be public.
 
+## Wispbyte Setup
+
+Wispbyte can run this bot either from GitHub or from the prepared upload zip.
+
+Recommended GitHub settings:
+
+- Git repo address: `https://github.com/monyratanaksy-byte/sai-discord-bot`
+- Branch: `main`
+- User uploaded files: `0`
+- Auto update: `1`
+- Docker image: Node.js 24
+- JS file: `src/index.js`
+
+Working Wispbyte startup command:
+
+```bash
+if [ -f /home/container/package.json ]; then /usr/local/bin/npm install; fi; /usr/local/bin/npm start
+```
+
+Required Wispbyte environment variables:
+
+```env
+DISCORD_TOKEN=your_bot_token
+CLIENT_ID=1505710039820927067
+GUILD_ID=1481641949651013765
+JOIN_TO_CREATE_CHANNEL_ID=1505717293823561870
+PREFIX=s!
+```
+
+For manual uploads, rebuild the upload folder and zip:
+
+```bash
+pnpm run package:wispbyte
+```
+
+Then upload `/Users/monyratanaksy/Desktop/Project/sai-discord-bot-wisebyte.zip` and extract it so `package.json` is directly under `/home/container/`.
+
 ## Commands
 
 Slash commands:
@@ -83,6 +120,8 @@ Slash commands:
 - `/ping`
 - `/userinfo [user]`
 - `/profile [user]`
+- `/admin status`
+- `/admin config`
 
 Prefix commands:
 
@@ -103,6 +142,8 @@ Room owner controls:
 - Show
 - Rename
 - Set user limit
+- Allow a specific user to join
+- Deny a specific user from joining
 - Claim ownership if the old owner leaves
 - Delete room
 

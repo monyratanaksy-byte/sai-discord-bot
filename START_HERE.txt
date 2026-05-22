@@ -1,0 +1,24 @@
+S.A.I easy update workflow
+
+Source folder:
+/Users/monyratanaksy/Desktop/Project/sai-discord-bot
+
+Manual Wispbyte upload zip:
+/Users/monyratanaksy/Desktop/Project/sai-discord-bot-wisebyte.zip
+
+Update code:
+1. Edit files in the source folder.
+2. Run pnpm run package:wispbyte to rebuild the Wispbyte upload folder and zip.
+3. Upload sai-discord-bot-wisebyte.zip to Wispbyte if you are using manual uploads.
+
+GitHub update:
+1. Commit and push this source folder to GitHub.
+2. Keep .env only on your computer and Wispbyte.
+3. Do not commit node_modules or zip files.
+
+Wispbyte startup command:
+if [ -f /home/container/package.json ]; then /usr/local/bin/npm install; fi; /usr/local/bin/npm start
+
+Expected healthy console output:
+S.A.I is online as S.A.I#2790
+Registered 4 slash commands for guild 1481641949651013765.
