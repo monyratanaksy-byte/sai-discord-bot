@@ -14,6 +14,7 @@ import { createTemporaryTextChannel } from './server-features.js';
 import { getGuildData, updateGuildData } from './storage.js';
 
 const temporaryRooms = new Map();
+const roomEmojiPool = ['🌸', '☁️', '✨', '🌷', '🫧', '⭐', '🍓', '🌙', '🧸', '🎧'];
 
 export async function handleVoiceStateUpdate(oldState, newState) {
   if (
@@ -277,8 +278,9 @@ export async function handleVoiceModal(interaction) {
 
 async function createTemporaryRoom(newState) {
   const { guild, member, channel: joinChannel } = newState;
+  const roomEmoji = roomEmojiPool[Math.floor(Math.random() * roomEmojiPool.length)];
   const room = await guild.channels.create({
-    name: `${member.displayName}'s room`,
+    name: `${roomEmoji} ${member.displayName}'s Room`,
     type: ChannelType.GuildVoice,
     parent: joinChannel?.parentId || null,
     permissionOverwrites: [
