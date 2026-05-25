@@ -10,6 +10,8 @@ import {
   TextInputStyle,
 } from 'discord.js';
 import { config } from './config.js';
+import { createTemporaryTextChannel } from './server-features.js';
+import { getGuildData, updateGuildData } from './storage.js';
 
 const temporaryRooms = new Map();
 
@@ -23,17 +25,55 @@ export async function handleVoiceStateUpdate(oldState, newState) {
   }
 
   if (
+    newState.channelId &&
+    temporaryRooms.has(newState.channelId) &&
+    newState.member
+  ) {
+    const room = temporaryRooms.get(newState.channelId);
+    if (room.textChannelId) {
+      const textChannel = await newState.guild.channels.fetch(room.textChannelId).catch(() => null);
+      await textChannel?.permissionOverwrites
+        .edit(newState.member.id, {
+          ViewChannel: true,
+          SendMessages: true,
+        })
+        .catch(() => {});
+    }
+  }
+
+  if (
+    oldState.channelId &&
+    oldState.channelId !== newState.channelId &&
+    temporaryRooms.has(oldState.channelId) &&
+    oldState.member
+  ) {
+    const room = temporaryRooms.get(oldState.channelId);
+    if (room.textChannelId && oldState.member.id !== room.ownerId) {
+      const textChannel = await oldState.guild.channels.fetch(room.textChannelId).catch(() => null);
+      await textChannel?.permissionOverwrites.delete(oldState.member.id).catch(() => {});
+    }
+  }
+
+  if (
     oldState.channelId &&
     temporaryRooms.has(oldState.channelId) &&
     oldState.channel?.members.size === 0
   ) {
+    const room = temporaryRooms.get(oldState.channelId);
     temporaryRooms.delete(oldState.channelId);
+    await updateGuildData(oldState.guild.id, (guildData) => {
+      delete guildData.voiceRooms[oldState.channelId];
+    });
+    if (room?.textChannelId) {
+      const textChannel = await oldState.guild.channels.fetch(room.textChannelId).catch(() => null);
+      await textChannel?.delete('S.A.I temporary voice room text channel is empty.').catch(() => {});
+    }
     await oldState.channel.delete('S.A.I temporary voice room is empty.').catch(() => {});
   }
 }
 
 export async function handleVoiceButton(interaction) {
-  const room = getRoomForInteraction(interaction);
+  const room = await getRoomForInteraction(interaction);
   if (!room) {
     await interaction.reply({
       content: 'This control panel is only for active S.A.I voice rooms.',
@@ -148,7 +188,7 @@ export async function handleVoiceButton(interaction) {
 
 export async function handleVoiceModal(interaction) {
   const [modalAction, channelId] = interaction.customId.split(':');
-  const room = temporaryRooms.get(channelId);
+  const room = await getRoomById(interaction.guild, channelId);
 
   if (!room) {
     await interaction.reply({
@@ -264,8 +304,28 @@ async function createTemporaryRoom(newState) {
     ownerId: member.id,
     createdAt: Date.now(),
   });
+  await updateGuildData(guild.id, (guildData) => {
+    guildData.voiceRooms[room.id] = {
+      channelId: room.id,
+      ownerId: member.id,
+      createdAt: Date.now(),
+      textChannelId: null,
+    };
+  });
 
   await member.voice.setChannel(room, 'S.A.I moved member to temporary room.');
+  const textChannel = await createTemporaryTextChannel(room, member.id).catch((error) => {
+    console.error('Temporary text channel creation failed:', error);
+    return null;
+  });
+  if (textChannel) {
+    temporaryRooms.get(room.id).textChannelId = textChannel.id;
+    await updateGuildData(guild.id, (guildData) => {
+      if (guildData.voiceRooms[room.id]) {
+        guildData.voiceRooms[room.id].textChannelId = textChannel.id;
+      }
+    });
+  }
   await sendControlPanel(room, member.id);
 }
 
@@ -332,9 +392,35 @@ function extractUserId(value) {
   return match?.[0] || null;
 }
 
-function getRoomForInteraction(interaction) {
+async function getRoomForInteraction(interaction) {
   const channelId = interaction.channel?.id;
-  return channelId ? temporaryRooms.get(channelId) : null;
+  return channelId ? getRoomById(interaction.guild, channelId) : null;
+}
+
+async function getRoomById(guild, channelId) {
+  const cached = temporaryRooms.get(channelId);
+  if (cached) return cached;
+
+  const guildData = await getGuildData(guild.id);
+  const saved = guildData.voiceRooms[channelId];
+  if (!saved) return null;
+
+  const channel = await guild.channels.fetch(channelId).catch(() => null);
+  if (!channel) {
+    await updateGuildData(guild.id, (data) => {
+      delete data.voiceRooms[channelId];
+    });
+    return null;
+  }
+
+  const room = {
+    channel,
+    ownerId: saved.ownerId,
+    createdAt: saved.createdAt,
+    textChannelId: saved.textChannelId,
+  };
+  temporaryRooms.set(channelId, room);
+  return room;
 }
 
 async function isRoomOwner(interaction, room) {
@@ -363,6 +449,11 @@ async function claimRoom(interaction, room) {
   }
 
   room.ownerId = interaction.user.id;
+  await updateGuildData(interaction.guild.id, (guildData) => {
+    if (guildData.voiceRooms[room.channel.id]) {
+      guildData.voiceRooms[room.channel.id].ownerId = interaction.user.id;
+    }
+  });
   await room.channel.permissionOverwrites.edit(interaction.user.id, {
     ViewChannel: true,
     Connect: true,

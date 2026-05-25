@@ -4,6 +4,7 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder,
 } from 'discord.js';
+import { featureCommands, runFeatureSlashCommand } from './server-features.js';
 
 export const slashCommands = [
   new SlashCommandBuilder()
@@ -72,7 +73,7 @@ export const slashCommands = [
         .setName('config')
         .setDescription('Show the active join-to-create configuration.'),
     ),
-].map((command) => command.toJSON());
+].map((command) => command.toJSON()).concat(featureCommands);
 
 export const commandMentionDescriptions = slashCommands.map((command) => ({
   name: command.name,
@@ -119,7 +120,10 @@ export async function runSlashCommand(interaction) {
 
   if (interaction.commandName === 'admin') {
     await runAdminCommand(interaction);
+    return;
   }
+
+  await runFeatureSlashCommand(interaction);
 }
 
 export async function runPrefixCommand(message, prefix) {
@@ -144,7 +148,7 @@ export async function runPrefixCommand(message, prefix) {
         `\`${prefix}ping\` - Check bot status`,
         `\`${prefix}userinfo [@user|user_id]\` - Show user information`,
         `\`${prefix}profile [@user|user_id]\` - Show a user profile`,
-        'Slash commands: `/ping`, `/userinfo`, `/profile`',
+        'Slash commands: `/ping`, `/userinfo`, `/profile`, `/setup`, `/ticket`, `/mod`, `/poll`, `/afk`, `/rank`',
       ].join('\n'),
     );
     return true;
