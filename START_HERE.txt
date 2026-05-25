@@ -7,7 +7,7 @@ Manual Wispbyte upload zip:
 /Users/monyratanaksy/Desktop/Project/sai-discord-bot-wisebyte.zip
 
 Manual Katabump upload zip:
-/Users/monyratanaksy/Desktop/Project/sai-discord-bot-katabump-update.zip
+/Users/monyratanaksy/Desktop/KATABUMP BOT UPLOAD - USE THIS/sai-discord-bot-katabump-update.zip
 
 Update code:
 1. Edit files in the source folder.
@@ -16,9 +16,10 @@ Update code:
 
 Katabump update:
 1. Run bash scripts/package-katabump.sh from the source folder.
-2. Upload sai-discord-bot-katabump-update.zip to Katabump.
-3. Extract it directly into /home/container/.
-4. Keep JS FILE set to src/index.js.
+2. Open the Desktop folder named KATABUMP BOT UPLOAD - USE THIS.
+3. Upload sai-discord-bot-katabump-update.zip to Katabump.
+4. Extract it directly into /home/container/.
+5. Keep JS FILE set to src/index.js.
 
 Persistent server data:
 /home/container/data/sai-data.json
