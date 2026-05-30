@@ -968,7 +968,7 @@ async function handleLordNicknameCommand(message) {
   }
 
   await target.setNickname(parsed.nickname, `S.A.I lord command by ${message.author.tag}.`);
-  await sendLordWebhookReply(message);
+  await sendLordWebhookReply(message, target);
   await logEvent(
     message.guild,
     'Lord Nickname Command',
@@ -1295,10 +1295,10 @@ function parseLordNicknameCommand(message) {
   return null;
 }
 
-async function sendLordWebhookReply(message) {
-  const username = message.member?.displayName || message.author.username;
-  const avatarURL = message.member?.displayAvatarURL({ size: 256 }) ||
-    message.author.displayAvatarURL({ size: 256 });
+async function sendLordWebhookReply(message, target) {
+  const username = target.displayName || target.user.username;
+  const avatarURL = target.displayAvatarURL({ size: 256 }) ||
+    target.user.displayAvatarURL({ size: 256 });
 
   if (message.channel?.createWebhook) {
     const webhook = await message.channel

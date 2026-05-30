@@ -50,7 +50,7 @@ Main setup commands:
 /emoji add
 
 Admin-only word trigger:
-I Sai command @user to nick your self New Nickname
+I Sai command @user to nick yourself New Nickname
 
 Shortcut:
 Sai nick @user New Nickname
