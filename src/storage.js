@@ -77,6 +77,7 @@ export function createGuildData() {
     roleMenus: {},
     voiceRooms: {},
     tickets: {},
+    reminders: {},
     warnings: {},
     levels: {},
     economy: {},

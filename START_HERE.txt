@@ -52,5 +52,14 @@ Main setup commands:
 Admin-only word trigger:
 I Sai command @user to nick yourself New Nickname
 
+Also works:
+I command @user to nick yourself New Nickname
+I command you @user to nick yourself New Nickname
+
 Shortcut:
 Sai nick @user New Nickname
+
+Admin-only reminder trigger:
+I Sai command @user to remind me to Check something in 10 mins
+I command @user to remind me to Check something in 10 mins
+I command you @user to remind me to Check something in 10 mins

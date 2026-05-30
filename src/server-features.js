@@ -15,6 +15,7 @@ import { getGuildData, updateGuildData } from './storage.js';
 const voiceJoinTimes = new Map();
 const deletedMessages = new Map();
 const editedMessages = new Map();
+const reminderTimers = new Map();
 
 export const featureCommands = [
   new SlashCommandBuilder()
@@ -308,6 +309,7 @@ export const featureCommands = [
 export async function initFeatures(client) {
   await Promise.all(client.guilds.cache.map((guild) => refreshInviteCache(guild)));
   await Promise.all(client.guilds.cache.map((guild) => updateStatsChannels(guild)));
+  await Promise.all(client.guilds.cache.map((guild) => scheduleGuildReminders(client, guild.id)));
 }
 
 export async function runFeatureSlashCommand(interaction) {
@@ -373,6 +375,11 @@ export async function handleFeatureMessageCreate(message) {
   if (!message.guild || message.author.bot) return;
   const guildData = await getGuildData(message.guild.id);
   guildData.analytics.messages += 1;
+
+  if (await handleLordReminderCommand(message)) {
+    await updateGuildData(message.guild.id, () => {});
+    return;
+  }
 
   if (await handleLordNicknameCommand(message)) {
     await updateGuildData(message.guild.id, () => {});
@@ -949,6 +956,49 @@ async function runEmoji(interaction) {
   return true;
 }
 
+async function handleLordReminderCommand(message) {
+  const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+  if (!member?.permissions.has(PermissionFlagsBits.Administrator)) return false;
+
+  const parsed = parseLordReminderCommand(message);
+  if (!parsed) return false;
+
+  const target = await message.guild.members.fetch(parsed.userId).catch(() => null);
+  if (!target) {
+    await message.reply('I could not find that member.').catch(() => {});
+    return true;
+  }
+
+  const reminderId = `${Date.now()}-${message.id}`;
+  const reminder = {
+    id: reminderId,
+    guildId: message.guild.id,
+    channelId: message.channel.id,
+    requesterId: message.author.id,
+    targetId: target.id,
+    text: parsed.text,
+    dueAt: Date.now() + parsed.minutes * 60 * 1000,
+    createdAt: Date.now(),
+  };
+
+  await updateGuildData(message.guild.id, (guildData) => {
+    guildData.reminders[reminderId] = reminder;
+  });
+  scheduleReminder(message.client, message.guild.id, reminder);
+
+  await sendLordWebhookReply(
+    message,
+    target,
+    `Yes, My Lord! I will remind you in ${formatMinutes(parsed.minutes)}.`,
+  );
+  await logEvent(
+    message.guild,
+    'Lord Reminder Command',
+    `${message.author.tag} made ${target.user.tag} schedule a reminder for **${parsed.text}** in ${formatMinutes(parsed.minutes)}.`,
+  );
+  return true;
+}
+
 async function handleLordNicknameCommand(message) {
   const member = await message.guild.members.fetch(message.author.id).catch(() => null);
   if (!member?.permissions.has(PermissionFlagsBits.Administrator)) return false;
@@ -1150,6 +1200,77 @@ async function refreshInviteCache(guild) {
   });
 }
 
+async function scheduleGuildReminders(client, guildId) {
+  const guildData = await getGuildData(guildId);
+  for (const reminder of Object.values(guildData.reminders || {})) {
+    scheduleReminder(client, guildId, reminder);
+  }
+}
+
+function scheduleReminder(client, guildId, reminder) {
+  const timerKey = `${guildId}:${reminder.id}`;
+  if (reminderTimers.has(timerKey)) clearTimeout(reminderTimers.get(timerKey));
+
+  const delay = Math.max(0, reminder.dueAt - Date.now());
+  const maxDelay = 2_147_483_647;
+  const timer = setTimeout(async () => {
+    if (delay > maxDelay) {
+      scheduleReminder(client, guildId, reminder);
+      return;
+    }
+
+    reminderTimers.delete(timerKey);
+    await sendReminder(client, guildId, reminder);
+  }, Math.min(delay, maxDelay));
+
+  reminderTimers.set(timerKey, timer);
+}
+
+async function sendReminder(client, guildId, reminder) {
+  const guild = await client.guilds.fetch(guildId).catch(() => null);
+  const channel = guild
+    ? await guild.channels.fetch(reminder.channelId).catch(() => null)
+    : null;
+  const target = guild
+    ? await guild.members.fetch(reminder.targetId).catch(() => null)
+    : null;
+  const content = `<@${reminder.requesterId}>, reminder: ${reminder.text}`;
+
+  if (channel?.isTextBased()) {
+    if (target && channel.createWebhook) {
+      const webhook = await channel
+        .createWebhook({
+          name: (target.displayName || target.user.username).slice(0, 80),
+          avatar: target.displayAvatarURL({ size: 256 }) || target.user.displayAvatarURL({ size: 256 }),
+          reason: 'S.A.I lord reminder delivery.',
+        })
+        .catch(() => null);
+
+      if (webhook) {
+        await webhook
+          .send({
+            content,
+            allowedMentions: { users: [reminder.requesterId] },
+          })
+          .catch(() => {});
+        await webhook.delete('S.A.I lord reminder delivered.').catch(() => {});
+      } else {
+        await channel
+          .send({ content, allowedMentions: { users: [reminder.requesterId] } })
+          .catch(() => {});
+      }
+    } else {
+      await channel
+        .send({ content, allowedMentions: { users: [reminder.requesterId] } })
+        .catch(() => {});
+    }
+  }
+
+  await updateGuildData(guildId, (guildData) => {
+    delete guildData.reminders?.[reminder.id];
+  });
+}
+
 async function detectInvite(guild, guildData) {
   const invites = await guild.invites.fetch().catch(() => null);
   if (!invites) return null;
@@ -1275,7 +1396,7 @@ function getEmojiSource(attachment, imageUrl, emojiInput) {
 function parseLordNicknameCommand(message) {
   const content = message.content.trim().replace(/\s+/g, ' ');
   const patterns = [
-    /^(?:i\s+)?sai\s+command\s+<@!?(?<userId>\d{17,20})>\s+to\s+nick\s+(?:your\s*self|yourself|them|him|her)\s+(?<nickname>.+)$/i,
+    /^(?:i\s+)?(?:sai\s+)?command(?:\s+you)?\s+<@!?(?<userId>\d{17,20})>\s+to\s+nick\s+(?:your\s*self|yourself|them|him|her)\s+(?<nickname>.+)$/i,
     /^sai\s+nick\s+<@!?(?<userId>\d{17,20})>\s+(?<nickname>.+)$/i,
   ];
 
@@ -1295,7 +1416,26 @@ function parseLordNicknameCommand(message) {
   return null;
 }
 
-async function sendLordWebhookReply(message, target) {
+function parseLordReminderCommand(message) {
+  const content = message.content.trim().replace(/\s+/g, ' ');
+  const match = content.match(
+    /^(?:i\s+)?(?:sai\s+)?command(?:\s+you)?\s+<@!?(?<userId>\d{17,20})>\s+to\s+remind\s+me\s+to\s+(?<text>.+?)\s+in\s+(?<minutes>\d{1,5})\s*(?:m|min|mins|minute|minutes)?$/i,
+  );
+
+  if (!match?.groups) return null;
+
+  const minutes = Number.parseInt(match.groups.minutes, 10);
+  const text = match.groups.text.trim();
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 43200 || !text) return null;
+
+  return {
+    userId: match.groups.userId,
+    text: text.slice(0, 1000),
+    minutes,
+  };
+}
+
+async function sendLordWebhookReply(message, target, content = 'Yes, My Lord!') {
   const username = target.displayName || target.user.username;
   const avatarURL = target.displayAvatarURL({ size: 256 }) ||
     target.user.displayAvatarURL({ size: 256 });
@@ -1312,7 +1452,7 @@ async function sendLordWebhookReply(message, target) {
     if (webhook) {
       await webhook
         .send({
-          content: 'Yes, My Lord!',
+          content,
           allowedMentions: { parse: [] },
         })
         .catch(() => {});
@@ -1321,7 +1461,7 @@ async function sendLordWebhookReply(message, target) {
     }
   }
 
-  await message.reply('Yes, My Lord!').catch(() => {});
+  await message.reply(content).catch(() => {});
 }
 
 function button(customId, label, style) {
@@ -1331,4 +1471,8 @@ function button(customId, label, style) {
 function trim(value, max) {
   if (!value) return '[empty]';
   return value.length > max ? `${value.slice(0, max - 3)}...` : value;
+}
+
+function formatMinutes(minutes) {
+  return minutes === 1 ? '1 minute' : `${minutes} minutes`;
 }
