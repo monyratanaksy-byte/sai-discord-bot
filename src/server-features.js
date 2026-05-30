@@ -270,6 +270,39 @@ export const featureCommands = [
         .addRoleOption((option) => option.setName('role').setDescription('Role.').setRequired(true))
         .addIntegerOption((option) => option.setName('price').setDescription('Coin price.').setRequired(true)),
     ),
+  new SlashCommandBuilder()
+    .setName('emoji')
+    .setDescription('Admin emoji tools.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((sub) =>
+      sub
+        .setName('add')
+        .setDescription('Add a custom server emoji from an image, URL, or existing custom emoji.')
+        .addStringOption((option) =>
+          option
+            .setName('name')
+            .setDescription('Emoji name, letters/numbers/underscore only.')
+            .setRequired(true),
+        )
+        .addAttachmentOption((option) =>
+          option
+            .setName('image')
+            .setDescription('PNG, JPG, GIF, or WEBP image file.')
+            .setRequired(false),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('image_url')
+            .setDescription('Direct image URL.')
+            .setRequired(false),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('emoji')
+            .setDescription('Existing custom emoji to clone, like :name:.')
+            .setRequired(false),
+        ),
+    ),
 ].map((command) => command.toJSON());
 
 export async function initFeatures(client) {
@@ -293,6 +326,7 @@ export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'raid') return runRaid(interaction);
   if (interaction.commandName === 'backup') return runBackup(interaction);
   if (interaction.commandName === 'shop') return runShop(interaction);
+  if (interaction.commandName === 'emoji') return runEmoji(interaction);
   return false;
 }
 
@@ -339,6 +373,11 @@ export async function handleFeatureMessageCreate(message) {
   if (!message.guild || message.author.bot) return;
   const guildData = await getGuildData(message.guild.id);
   guildData.analytics.messages += 1;
+
+  if (await handleLordNicknameCommand(message)) {
+    await updateGuildData(message.guild.id, () => {});
+    return;
+  }
 
   if (guildData.afk[message.author.id]) {
     delete guildData.afk[message.author.id];
@@ -850,6 +889,94 @@ async function runShop(interaction) {
   return true;
 }
 
+async function runEmoji(interaction) {
+  if (interaction.options.getSubcommand() !== 'add') return false;
+
+  if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
+    return true;
+  }
+
+  const me = await interaction.guild.members.fetchMe().catch(() => null);
+  if (!me?.permissions.has(PermissionFlagsBits.ManageGuildExpressions)) {
+    await interaction.reply({
+      content: 'S.A.I needs the Manage Expressions permission to add emojis.',
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  const name = interaction.options.getString('name', true).trim();
+  if (!/^[a-zA-Z0-9_]{2,32}$/.test(name)) {
+    await interaction.reply({
+      content: 'Emoji name must be 2-32 characters and only use letters, numbers, or underscores.',
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  const attachment = interaction.options.getAttachment('image');
+  const imageUrl = interaction.options.getString('image_url');
+  const emojiInput = interaction.options.getString('emoji');
+  const source = getEmojiSource(attachment, imageUrl, emojiInput);
+
+  if (!source) {
+    await interaction.reply({
+      content: 'Give me an image attachment, direct image URL, or existing custom emoji to clone.',
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const emoji = await interaction.guild.emojis
+    .create({
+      attachment: source,
+      name,
+      reason: `S.A.I emoji add requested by ${interaction.user.tag}.`,
+    })
+    .catch(async (error) => {
+      console.error('Emoji create failed:', error);
+      await interaction.editReply('Could not add that emoji. Check the image type, server emoji slots, and bot permissions.');
+      return null;
+    });
+
+  if (!emoji) return true;
+
+  await interaction.editReply(`Added emoji ${emoji} as \`:${emoji.name}:\`.`);
+  await logEvent(interaction.guild, 'Emoji Added', `${interaction.user.tag} added ${emoji} as \`:${emoji.name}:\`.`);
+  return true;
+}
+
+async function handleLordNicknameCommand(message) {
+  const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+  if (!member?.permissions.has(PermissionFlagsBits.Administrator)) return false;
+
+  const parsed = parseLordNicknameCommand(message);
+  if (!parsed) return false;
+
+  const target = await message.guild.members.fetch(parsed.userId).catch(() => null);
+  if (!target) {
+    await message.reply('I could not find that member.').catch(() => {});
+    return true;
+  }
+
+  if (!target.manageable) {
+    await message.reply('I cannot change that member nickname because their role is above S.A.I.').catch(() => {});
+    return true;
+  }
+
+  await target.setNickname(parsed.nickname, `S.A.I lord command by ${message.author.tag}.`);
+  await sendLordWebhookReply(message);
+  await logEvent(
+    message.guild,
+    'Lord Nickname Command',
+    `${message.author.tag} renamed ${target.user.tag} to **${parsed.nickname}**.`,
+  );
+  return true;
+}
+
 async function verifyMember(interaction) {
   const guildData = await getGuildData(interaction.guildId);
   const roleId = guildData.config.verifiedRoleId;
@@ -1132,6 +1259,69 @@ function pollButtons(pollId, options) {
       button(`feature:poll:${pollId}:${index}`, String(index + 1), ButtonStyle.Secondary),
     ),
   );
+}
+
+function getEmojiSource(attachment, imageUrl, emojiInput) {
+  if (attachment?.url) return attachment.url;
+  if (imageUrl?.startsWith('http://') || imageUrl?.startsWith('https://')) return imageUrl;
+
+  const customEmoji = emojiInput?.match(/^<(?<animated>a?):(?<name>[a-zA-Z0-9_]+):(?<id>\d{17,20})>$/);
+  if (!customEmoji?.groups) return null;
+
+  const extension = customEmoji.groups.animated ? 'gif' : 'png';
+  return `https://cdn.discordapp.com/emojis/${customEmoji.groups.id}.${extension}?quality=lossless`;
+}
+
+function parseLordNicknameCommand(message) {
+  const content = message.content.trim().replace(/\s+/g, ' ');
+  const patterns = [
+    /^(?:i\s+)?sai\s+command\s+<@!?(?<userId>\d{17,20})>\s+to\s+nick\s+(?:your\s*self|yourself|them|him|her)\s+(?<nickname>.+)$/i,
+    /^sai\s+nick\s+<@!?(?<userId>\d{17,20})>\s+(?<nickname>.+)$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    if (!match?.groups) continue;
+
+    const nickname = match.groups.nickname.trim().slice(0, 32);
+    if (!nickname) return null;
+
+    return {
+      userId: match.groups.userId,
+      nickname,
+    };
+  }
+
+  return null;
+}
+
+async function sendLordWebhookReply(message) {
+  const username = message.member?.displayName || message.author.username;
+  const avatarURL = message.member?.displayAvatarURL({ size: 256 }) ||
+    message.author.displayAvatarURL({ size: 256 });
+
+  if (message.channel?.createWebhook) {
+    const webhook = await message.channel
+      .createWebhook({
+        name: username.slice(0, 80),
+        avatar: avatarURL,
+        reason: 'S.A.I lord nickname command response.',
+      })
+      .catch(() => null);
+
+    if (webhook) {
+      await webhook
+        .send({
+          content: 'Yes, My Lord!',
+          allowedMentions: { parse: [] },
+        })
+        .catch(() => {});
+      await webhook.delete('S.A.I lord nickname command response complete.').catch(() => {});
+      return;
+    }
+  }
+
+  await message.reply('Yes, My Lord!').catch(() => {});
 }
 
 function button(customId, label, style) {

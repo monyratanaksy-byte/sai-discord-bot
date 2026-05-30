@@ -36,7 +36,7 @@ if [ -f /home/container/package.json ]; then /usr/local/bin/npm install; fi; /us
 
 Expected healthy console output:
 S.A.I is online as S.A.I#2790
-Registered 20 slash commands for guild 1481641949651013765.
+Registered 21 slash commands for guild 1481641949651013765.
 
 Main setup commands:
 /setup welcome
@@ -47,3 +47,10 @@ Main setup commands:
 /setup stats
 /setup booster
 /setup confession
+/emoji add
+
+Admin-only word trigger:
+I Sai command @user to nick your self New Nickname
+
+Shortcut:
+Sai nick @user New Nickname
