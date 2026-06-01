@@ -10,6 +10,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { config } from './config.js';
 import { getGuildData, updateGuildData } from './storage.js';
 
 const voiceJoinTimes = new Map();
@@ -22,6 +23,11 @@ export const featureCommands = [
     .setName('setup')
     .setDescription('Configure S.A.I server systems.')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((sub) =>
+      sub
+        .setName('template')
+        .setDescription('Create the recommended S.A.I server layout, roles, and permissions.'),
+    )
     .addSubcommand((sub) =>
       sub
         .setName('welcome')
@@ -535,8 +541,159 @@ export async function createTemporaryTextChannel(voiceChannel, ownerId) {
   return channel;
 }
 
+async function runServerTemplateSetup(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const me = await interaction.guild.members.fetchMe().catch(() => null);
+  const requiredPermissions = [
+    PermissionFlagsBits.ManageChannels,
+    PermissionFlagsBits.ManageRoles,
+    PermissionFlagsBits.ManageWebhooks,
+  ];
+  const missing = requiredPermissions.filter((permission) => !me?.permissions.has(permission));
+  if (missing.length > 0) {
+    await interaction.editReply(
+      'S.A.I needs Manage Channels, Manage Roles, and Manage Webhooks before I can build the server layout.',
+    );
+    return true;
+  }
+
+  const everyoneRole = interaction.guild.roles.everyone;
+  const verifiedRole = await getOrCreateRole(interaction.guild, {
+    name: 'Verified',
+    color: 0x57f287,
+    reason: 'S.A.I server template verified role.',
+  });
+  const staffRole = await getOrCreateRole(interaction.guild, {
+    name: 'Staff',
+    color: 0x5865f2,
+    reason: 'S.A.I server template staff role.',
+  });
+
+  const categoryInfo = await getOrCreateCategory(interaction.guild, 'info・🌸', [
+    denySend(everyoneRole.id),
+    allowRead(verifiedRole.id),
+  ]);
+  const categoryChat = await getOrCreateCategory(interaction.guild, 'chat・🌐', [
+    denyView(everyoneRole.id),
+    allowReadWrite(verifiedRole.id),
+  ]);
+  const categoryVoice = await getOrCreateCategory(interaction.guild, 'voice・🎧', [
+    denyView(everyoneRole.id),
+    allowVoice(verifiedRole.id),
+  ]);
+  const categorySupport = await getOrCreateCategory(interaction.guild, 'support・🛟', [
+    denyView(everyoneRole.id),
+    allowReadWrite(verifiedRole.id),
+    allowReadWrite(staffRole.id),
+  ]);
+  const categoryStats = await getOrCreateCategory(interaction.guild, 'server・📊', [
+    allowReadDenyConnect(everyoneRole.id),
+  ]);
+  const categoryArchive = await getOrCreateCategory(interaction.guild, 'archive・📦', [
+    denyView(everyoneRole.id),
+    allowReadWrite(staffRole.id),
+  ]);
+  const categoryStaff = await getOrCreateCategory(interaction.guild, 'staff・🔒', [
+    denyView(everyoneRole.id),
+    allowReadWrite(staffRole.id),
+  ]);
+
+  const welcome = await getOrCreateTextChannel(interaction.guild, 'welcome', categoryInfo.id, [
+    allowReadOnly(everyoneRole.id),
+  ]);
+  const rules = await getOrCreateTextChannel(interaction.guild, 'rules', categoryInfo.id, [
+    allowReadOnly(everyoneRole.id),
+  ]);
+  const roles = await getOrCreateTextChannel(interaction.guild, 'roles', categoryInfo.id, [
+    allowReadOnly(everyoneRole.id),
+  ]);
+  const announcements = await getOrCreateTextChannel(interaction.guild, 'announcements', categoryInfo.id, [
+    allowRead(verifiedRole.id),
+    denySend(everyoneRole.id),
+  ]);
+
+  const general = await getOrCreateTextChannel(interaction.guild, 'general', categoryChat.id);
+  const botCommands = await getOrCreateTextChannel(interaction.guild, 'bot-commands', categoryChat.id);
+  const media = await getOrCreateTextChannel(interaction.guild, 'media', categoryChat.id);
+  const tickets = await getOrCreateTextChannel(interaction.guild, 'tickets', categorySupport.id);
+  const suggestions = await getOrCreateTextChannel(interaction.guild, 'suggestions', categorySupport.id);
+  const logs = await getOrCreateTextChannel(interaction.guild, 'logs', categoryStaff.id);
+  await getOrCreateTextChannel(interaction.guild, 'mod-chat', categoryStaff.id);
+  await getOrCreateTextChannel(interaction.guild, 'old-stuff', categoryArchive.id);
+
+  const createRoom = config.joinToCreateChannelId
+    ? await interaction.guild.channels.fetch(config.joinToCreateChannelId).catch(() => null)
+    : null;
+  if (createRoom?.type === ChannelType.GuildVoice) {
+    await createRoom.setParent(categoryVoice.id, { lockPermissions: false }).catch(() => {});
+    await createRoom.setName('➕ Create a Room').catch(() => {});
+    await createRoom.permissionOverwrites.set([
+      denyView(everyoneRole.id),
+      allowVoice(verifiedRole.id),
+    ]).catch(() => {});
+  }
+
+  await welcome.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle('Welcome & Rules')
+        .setDescription('Welcome in. Read the rules, then press the button below to unlock the server.'),
+    ],
+    components: [verifyRow()],
+  }).catch(() => {});
+  await rules.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle('Server Rules')
+        .setDescription([
+          '1. Be respectful.',
+          '2. No spam, raids, or invite advertising.',
+          '3. Keep content in the right channels.',
+          '4. Listen to staff.',
+          '5. Use common sense.',
+        ].join('\n')),
+    ],
+  }).catch(() => {});
+  await tickets.send({
+    embeds: [panelEmbed('Support Tickets', 'Open a private ticket if you need help.')],
+    components: [new ActionRowBuilder().addComponents(button('feature:ticket:open', 'Open Ticket', ButtonStyle.Primary))],
+  }).catch(() => {});
+
+  await updateGuildData(interaction.guildId, (guildData) => {
+    guildData.config.welcomeChannelId = welcome.id;
+    guildData.config.verifiedRoleId = verifiedRole.id;
+    guildData.config.rulesText = 'Read the rules, then press Accept Rules to unlock the server.';
+    guildData.config.ticketCategoryId = categorySupport.id;
+    guildData.config.supportRoleId = staffRole.id;
+    guildData.config.logChannelId = logs.id;
+    guildData.config.statsCategoryId = categoryStats.id;
+    guildData.config.automodEnabled = true;
+    guildData.config.levelingEnabled = true;
+    guildData.config.economyEnabled = true;
+    guildData.config.tempTextEnabled = true;
+    guildData.config.voiceRewardsEnabled = true;
+  });
+
+  await updateStatsChannels(interaction.guild);
+
+  await interaction.editReply([
+    'Server template created.',
+    `Roles: ${verifiedRole}, ${staffRole}`,
+    `Main channels: ${welcome}, ${rules}, ${roles}, ${announcements}, ${general}, ${botCommands}, ${media}, ${tickets}, ${suggestions}, ${logs}`,
+    createRoom ? `Join-to-create renamed: ${createRoom}` : 'Join-to-create channel was not found from .env, so rename it manually to ➕ Create a Room.',
+  ].join('\n'));
+  return true;
+}
+
 async function runSetup(interaction) {
   const sub = interaction.options.getSubcommand();
+
+  if (sub === 'template') {
+    return runServerTemplateSetup(interaction);
+  }
 
   if (sub === 'welcome') {
     const channel = interaction.options.getChannel('channel', true);
@@ -1339,6 +1496,133 @@ async function logEvent(guild, title, description) {
         .setTimestamp(),
     ],
   }).catch(() => {});
+}
+
+async function getOrCreateRole(guild, options) {
+  const existing = guild.roles.cache.find((role) => role.name === options.name);
+  if (existing) return existing;
+
+  return guild.roles.create({
+    name: options.name,
+    color: options.color,
+    reason: options.reason,
+  });
+}
+
+async function getOrCreateCategory(guild, name, permissionOverwrites = []) {
+  const existing = guild.channels.cache.find(
+    (channel) => channel.type === ChannelType.GuildCategory && channel.name === name,
+  );
+  if (existing) {
+    await existing.permissionOverwrites.set(permissionOverwrites).catch(() => {});
+    return existing;
+  }
+
+  return guild.channels.create({
+    name,
+    type: ChannelType.GuildCategory,
+    permissionOverwrites,
+    reason: 'S.A.I server template category.',
+  });
+}
+
+async function getOrCreateTextChannel(guild, name, parentId, permissionOverwrites = null) {
+  const existing = guild.channels.cache.find(
+    (channel) => channel.type === ChannelType.GuildText && channel.name === name,
+  );
+  const options = {
+    parent: parentId,
+    reason: 'S.A.I server template text channel.',
+  };
+
+  if (permissionOverwrites) options.permissionOverwrites = permissionOverwrites;
+
+  if (existing) {
+    await existing.setParent(parentId, { lockPermissions: !permissionOverwrites }).catch(() => {});
+    if (permissionOverwrites) await existing.permissionOverwrites.set(permissionOverwrites).catch(() => {});
+    return existing;
+  }
+
+  return guild.channels.create({
+    name,
+    type: ChannelType.GuildText,
+    ...options,
+  });
+}
+
+function allowRead(roleId) {
+  return {
+    id: roleId,
+    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+  };
+}
+
+function allowReadOnly(roleId) {
+  return {
+    id: roleId,
+    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+    deny: [
+      PermissionFlagsBits.SendMessages,
+      PermissionFlagsBits.CreatePublicThreads,
+      PermissionFlagsBits.CreatePrivateThreads,
+    ],
+  };
+}
+
+function allowReadDenyConnect(roleId) {
+  return {
+    id: roleId,
+    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+    deny: [PermissionFlagsBits.Connect],
+  };
+}
+
+function allowReadWrite(roleId) {
+  return {
+    id: roleId,
+    allow: [
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.SendMessages,
+      PermissionFlagsBits.ReadMessageHistory,
+      PermissionFlagsBits.AttachFiles,
+      PermissionFlagsBits.EmbedLinks,
+      PermissionFlagsBits.AddReactions,
+    ],
+  };
+}
+
+function allowVoice(roleId) {
+  return {
+    id: roleId,
+    allow: [
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.Connect,
+      PermissionFlagsBits.Speak,
+      PermissionFlagsBits.Stream,
+      PermissionFlagsBits.UseVAD,
+    ],
+  };
+}
+
+function denyView(roleId) {
+  return {
+    id: roleId,
+    deny: [PermissionFlagsBits.ViewChannel],
+  };
+}
+
+function denySend(roleId) {
+  return {
+    id: roleId,
+    deny: [PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.CreatePrivateThreads],
+  };
+}
+
+function denyConnect(roleId) {
+  return {
+    id: roleId,
+    deny: [PermissionFlagsBits.Connect],
+  };
 }
 
 function addUserProgress(guildData, userId, xp, coins) {

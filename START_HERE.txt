@@ -39,6 +39,7 @@ S.A.I is online as S.A.I#2790
 Registered 21 slash commands for guild 1481641949651013765.
 
 Main setup commands:
+/setup template
 /setup welcome
 /setup roles
 /setup tickets
