@@ -149,13 +149,26 @@ Global User Install utility commands include:
 - `/note`, `/todo`, `/timezone`, `/time`, `/timer`
 - `/choose`, `/8ball`, `/coinflip`, `/dice`, `/math`, `/color`
 - `/avatar`, `/banner`, `/userinfo-lite`, `/profile-card`
-- `/fancy`, `/mock`, `/emojify`, `/uppercase`, `/lowercase`, `/titlecase`, `/clean`
+- `/password`, `/roll`, `/random-number`
+
+`/talk`, `/embed`, and `/announce` include a `private` option. Public slash
+command responses can still show Discord's command attribution line.
 
 User context menus include View Avatar, View Banner, User Info Lite, Profile
-Card, Compliment, Roast, Rate Avatar, and Ship With Me.
+Card, Compliment, and Rate Avatar.
 
 Message context menus include Quote Message, Save To Notes, Make Embed From
 Message, and Count Words.
+
+Admin-only hidden message triggers:
+
+- `Sai say Your message here`
+- `S.A.I say Your message here`
+- `Sai embed Title | Body | #57f287`
+
+These are normal message triggers. If S.A.I has Manage Messages and Send
+Messages in the channel, it deletes the trigger message and sends the bot
+message without storing the trigger in S.A.I snipe/log storage.
 
 Prefix commands:
 

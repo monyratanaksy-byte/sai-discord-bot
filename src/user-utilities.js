@@ -12,6 +12,7 @@ const BOT_DM = 1;
 const PRIVATE_CHANNEL = 2;
 const STRING = 3;
 const INTEGER = 4;
+const BOOLEAN = 5;
 const USER = 6;
 const globalReminderTimers = new Map();
 const maxTimeoutMs = 2_147_483_647;
@@ -24,15 +25,18 @@ const installContexts = {
 export const userInstallCommands = [
   slash('talk', 'Repeat a safe message.', [
     stringOption('message', 'Message to send.', true, 1, 1000),
+    booleanOption('private', 'Only show the response to you.', false),
   ]),
   slash('embed', 'Create a simple embed.', [
     stringOption('title', 'Embed title.', true, 1, 256),
     stringOption('body', 'Embed body.', true, 1, 2000),
     stringOption('color', 'Hex color, like #57f287.', false, 3, 7),
+    booleanOption('private', 'Only show the response to you.', false),
   ]),
   slash('announce', 'Create an announcement embed.', [
     stringOption('title', 'Announcement title.', true, 1, 256),
     stringOption('body', 'Announcement body.', true, 1, 2000),
+    booleanOption('private', 'Only show the response to you.', false),
   ]),
   slash('remind', 'Save a personal reminder.', [
     stringOption('text', 'Reminder text.', true, 1, 1000),
@@ -56,27 +60,6 @@ export const userInstallCommands = [
   ]),
   slash('coinflip', 'Flip a coin.'),
   slash('dice', 'Roll a die.', [intOption('sides', 'Number of sides.', false, 2, 1000000)]),
-  slash('fancy', 'Style text.', [
-    stringOption('text', 'Text.', true, 1, 500),
-    {
-      type: STRING,
-      name: 'style',
-      description: 'Style.',
-      required: true,
-      choices: [
-        { name: 'bold italic', value: 'bold_italic' },
-        { name: 'spaced', value: 'spaced' },
-        { name: 'bubble', value: 'bubble' },
-        { name: 'code', value: 'code' },
-      ],
-    },
-  ]),
-  slash('mock', 'Make mocking text.', [stringOption('text', 'Text.', true, 1, 1000)]),
-  slash('emojify', 'Turn letters into emoji.', [stringOption('text', 'Text.', true, 1, 80)]),
-  slash('uppercase', 'Uppercase text.', [stringOption('text', 'Text.', true, 1, 1000)]),
-  slash('lowercase', 'Lowercase text.', [stringOption('text', 'Text.', true, 1, 1000)]),
-  slash('titlecase', 'Title Case text.', [stringOption('text', 'Text.', true, 1, 1000)]),
-  slash('clean', 'Clean extra spaces from text.', [stringOption('text', 'Text.', true, 1, 1000)]),
   slash('avatar', 'View a user avatar.', [userOption()]),
   slash('banner', 'View a user banner.', [userOption()]),
   slash('userinfo-lite', 'View light user info.', [userOption()]),
@@ -95,28 +78,12 @@ export const userInstallCommands = [
     intOption('min', 'Minimum.', true, -1000000, 1000000),
     intOption('max', 'Maximum.', true, -1000000, 1000000),
   ]),
-  slash('truth', 'Get a truth prompt.'),
-  slash('dare', 'Get a dare prompt.'),
-  slash('wyr', 'Get a would-you-rather prompt.'),
-  slash('rps', 'Play rock paper scissors.', [{
-    type: STRING,
-    name: 'choice',
-    description: 'Your choice.',
-    required: true,
-    choices: [
-      { name: 'rock', value: 'rock' },
-      { name: 'paper', value: 'paper' },
-      { name: 'scissors', value: 'scissors' },
-    ],
-  }]),
   contextUser('View Avatar'),
   contextUser('View Banner'),
   contextUser('User Info Lite'),
   contextUser('Profile Card'),
   contextUser('Compliment'),
-  contextUser('Roast'),
   contextUser('Rate Avatar'),
-  contextUser('Ship With Me'),
   contextMessage('Quote Message'),
   contextMessage('Save To Notes'),
   contextMessage('Make Embed From Message'),
@@ -142,7 +109,7 @@ export async function runUserUtilityChatInput(interaction) {
   const name = interaction.commandName;
   if (!isUserInstallCommandName(name)) return false;
 
-  if (name === 'talk') return replyPublic(interaction, sanitizeTalk(interaction.options.getString('message', true)));
+  if (name === 'talk') return runTalk(interaction);
   if (name === 'embed') return runEmbed(interaction);
   if (name === 'announce') return runAnnounce(interaction);
   if (name === 'remind') return runPersonalReminder(interaction, interaction.options.getString('text', true), interaction.options.getInteger('minutes', true));
@@ -152,13 +119,6 @@ export async function runUserUtilityChatInput(interaction) {
   if (name === '8ball') return replyPrivate(interaction, pick(['Yes.', 'No.', 'Maybe.', 'Ask again later.', 'Absolutely.', 'Not looking good.']));
   if (name === 'coinflip') return replyPrivate(interaction, pick(['Heads', 'Tails']));
   if (name === 'dice') return replyPrivate(interaction, `You rolled **${randomInt(1, interaction.options.getInteger('sides') || 6)}**.`);
-  if (name === 'fancy') return replyPrivate(interaction, fancy(interaction.options.getString('text', true), interaction.options.getString('style', true)));
-  if (name === 'mock') return replyPrivate(interaction, mockText(interaction.options.getString('text', true)));
-  if (name === 'emojify') return replyPrivate(interaction, emojify(interaction.options.getString('text', true)));
-  if (name === 'uppercase') return replyPrivate(interaction, interaction.options.getString('text', true).toUpperCase());
-  if (name === 'lowercase') return replyPrivate(interaction, interaction.options.getString('text', true).toLowerCase());
-  if (name === 'titlecase') return replyPrivate(interaction, titleCase(interaction.options.getString('text', true)));
-  if (name === 'clean') return replyPrivate(interaction, interaction.options.getString('text', true).trim().replace(/\s+/g, ' '));
   if (['avatar', 'banner', 'userinfo-lite', 'avatar-link', 'profile-card'].includes(name)) return runUserView(interaction, name);
   if (name === 'timezone') return runTimezone(interaction);
   if (name === 'time') return runTime(interaction);
@@ -168,10 +128,6 @@ export async function runUserUtilityChatInput(interaction) {
   if (name === 'password') return replyPrivate(interaction, `\`${makePassword(interaction.options.getInteger('length') || 16)}\``);
   if (name === 'roll') return replyPrivate(interaction, `You rolled **${randomInt(1, interaction.options.getInteger('max') || 100)}**.`);
   if (name === 'random-number') return runRandomNumber(interaction);
-  if (name === 'truth') return replyPrivate(interaction, pick(truths));
-  if (name === 'dare') return replyPrivate(interaction, pick(dares));
-  if (name === 'wyr') return replyPrivate(interaction, pick(wyrs));
-  if (name === 'rps') return runRps(interaction);
   return false;
 }
 
@@ -182,9 +138,7 @@ export async function runUserContextCommand(interaction) {
   if (interaction.commandName === 'User Info Lite') return sendUserInfoLite(interaction, user);
   if (interaction.commandName === 'Profile Card') return sendProfileCard(interaction, user);
   if (interaction.commandName === 'Compliment') return replyPrivate(interaction, `${user} ${pick(compliments)}`);
-  if (interaction.commandName === 'Roast') return replyPrivate(interaction, `${user} ${pick(roasts)}`);
   if (interaction.commandName === 'Rate Avatar') return replyPrivate(interaction, `${user}'s avatar: **${randomInt(7, 10)}/10**`);
-  if (interaction.commandName === 'Ship With Me') return replyPrivate(interaction, `${interaction.user} x ${user}: **${randomInt(50, 100)}%**`);
   return false;
 }
 
@@ -193,6 +147,7 @@ export async function runMessageContextCommand(interaction) {
   if (interaction.commandName === 'Quote Message') {
     return interaction.reply({
       embeds: [new EmbedBuilder().setColor(0x5865f2).setAuthor({ name: message.author?.tag || 'Unknown' }).setDescription(message.content || '[no text]').setTimestamp()],
+      ephemeral: true,
       allowedMentions: { parse: [] },
     });
   }
@@ -204,7 +159,7 @@ export async function runMessageContextCommand(interaction) {
     return replyPrivate(interaction, `Saved note \`${id}\`.`);
   }
   if (interaction.commandName === 'Make Embed From Message') {
-    return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setDescription(message.content || '[no text]')], allowedMentions: { parse: [] } });
+    return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setDescription(message.content || '[no text]')], ephemeral: true, allowedMentions: { parse: [] } });
   }
   if (interaction.commandName === 'Count Words') {
     const words = (message.content || '').trim().split(/\s+/).filter(Boolean).length;
@@ -213,13 +168,27 @@ export async function runMessageContextCommand(interaction) {
   return false;
 }
 
+async function runTalk(interaction) {
+  const message = sanitizeTalk(interaction.options.getString('message', true));
+  const isPrivate = interaction.options.getBoolean('private') ?? false;
+  return interaction.reply({ content: message, ephemeral: isPrivate, allowedMentions: { parse: [] } });
+}
+
 async function runEmbed(interaction) {
   const color = parseColor(interaction.options.getString('color')) ?? 0x5865f2;
-  return interaction.reply({ embeds: [new EmbedBuilder().setColor(color).setTitle(interaction.options.getString('title', true)).setDescription(interaction.options.getString('body', true))], allowedMentions: { parse: [] } });
+  return interaction.reply({
+    embeds: [new EmbedBuilder().setColor(color).setTitle(interaction.options.getString('title', true)).setDescription(interaction.options.getString('body', true))],
+    ephemeral: interaction.options.getBoolean('private') ?? false,
+    allowedMentions: { parse: [] },
+  });
 }
 
 async function runAnnounce(interaction) {
-  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(interaction.options.getString('title', true)).setDescription(interaction.options.getString('body', true)).setTimestamp()], allowedMentions: { parse: [] } });
+  return interaction.reply({
+    embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(interaction.options.getString('title', true)).setDescription(interaction.options.getString('body', true)).setTimestamp()],
+    ephemeral: interaction.options.getBoolean('private') ?? false,
+    allowedMentions: { parse: [] },
+  });
 }
 
 async function runNote(interaction) {
@@ -384,6 +353,7 @@ function contextMessage(name) { return { type: ApplicationCommandType.Message, n
 function sub(name, description, options = []) { return { type: 1, name, description, options }; }
 function stringOption(name, description, required, min_length, max_length) { return { type: STRING, name, description, required, min_length, max_length }; }
 function intOption(name, description, required, min_value, max_value) { return { type: INTEGER, name, description, required, min_value, max_value }; }
+function booleanOption(name, description, required) { return { type: BOOLEAN, name, description, required }; }
 function userOption() { return { type: USER, name: 'user', description: 'User.', required: false }; }
 function replyPrivate(interaction, content) { return interaction.reply({ content: limit(content), ephemeral: true, allowedMentions: { parse: [] } }); }
 function replyPublic(interaction, content) { return interaction.reply({ content: limit(content, 1000), allowedMentions: { parse: [] } }); }
@@ -395,10 +365,6 @@ function randomInt(min, max) { return crypto.randomInt(min, max + 1); }
 function shortId() { return crypto.randomBytes(3).toString('hex'); }
 function formatItems(items, label) { const rows = Object.values(items || {}).slice(0, 20).map((item) => `\`${item.id}\` ${item.done ? '[done] ' : ''}${item.text}`); return rows.length ? rows.join('\n') : `No ${label} saved.`; }
 function parseColor(value) { if (!value) return null; const match = value.trim().match(/^#?([0-9a-f]{6})$/i); return match ? Number.parseInt(match[1], 16) : null; }
-function titleCase(text) { return text.toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase()); }
-function mockText(text) { return [...text].map((char, index) => index % 2 ? char.toUpperCase() : char.toLowerCase()).join(''); }
-function emojify(text) { return [...text.toLowerCase()].map((char) => /[a-z]/.test(char) ? `:regional_indicator_${char}:` : char === ' ' ? '   ' : char).join(' '); }
-function fancy(text, style) { if (style === 'bold_italic') return `***${text}***`; if (style === 'spaced') return [...text].join(' '); if (style === 'code') return `\`\`\`\n${text.replace(/```/g, '')}\n\`\`\``; return [...text].map((c) => bubbleMap[c.toLowerCase()] || c).join(''); }
 function makePassword(length) { const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*'; return Array.from({ length }, () => chars[randomInt(0, chars.length - 1)]).join(''); }
 
 function safeMath(expression) {
@@ -425,9 +391,4 @@ function safeMath(expression) {
   return Number.isInteger(result) ? String(result) : String(Number(result.toFixed(8)));
 }
 
-const bubbleMap = { a: 'ⓐ', b: 'ⓑ', c: 'ⓒ', d: 'ⓓ', e: 'ⓔ', f: 'ⓕ', g: 'ⓖ', h: 'ⓗ', i: 'ⓘ', j: 'ⓙ', k: 'ⓚ', l: 'ⓛ', m: 'ⓜ', n: 'ⓝ', o: 'ⓞ', p: 'ⓟ', q: 'ⓠ', r: 'ⓡ', s: 'ⓢ', t: 'ⓣ', u: 'ⓤ', v: 'ⓥ', w: 'ⓦ', x: 'ⓧ', y: 'ⓨ', z: 'ⓩ' };
-const truths = ['What is a secret you have never told anyone here?', 'Who was your first crush?', 'What is your most embarrassing moment?', 'What is one thing you would change about yourself?'];
-const dares = ['Send a funny selfie.', 'Speak only in emojis for 3 minutes.', 'Compliment three people.', 'Change your nickname for 10 minutes.'];
-const wyrs = ['Would you rather lose your phone or your wallet?', 'Would you rather be famous or rich?', 'Would you rather always be early or always be late?', 'Would you rather never use social media again or never watch movies again?'];
 const compliments = ['has elite energy.', 'looks like good vibes.', 'has a top-tier profile.', 'seems genuinely cool.'];
-const roasts = ['has a profile that loads slower than motivation on Monday.', 'is built like a pending friend request.', 'has mysterious side character energy.', 'needs a software update.'];

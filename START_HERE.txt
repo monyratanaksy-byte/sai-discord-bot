@@ -109,13 +109,6 @@ Global user-installable slash commands:
 /8ball
 /coinflip
 /dice
-/fancy
-/mock
-/emojify
-/uppercase
-/lowercase
-/titlecase
-/clean
 /avatar
 /banner
 /userinfo-lite
@@ -129,10 +122,10 @@ Global user-installable slash commands:
 /password
 /roll
 /random-number
-/truth
-/dare
-/wyr
-/rps
+
+/talk, /embed, and /announce have a private option. Public slash command
+responses can still show Discord's "used command" line because that is a
+Discord client behavior.
 
 User context menu commands:
 View Avatar
@@ -140,15 +133,24 @@ View Banner
 User Info Lite
 Profile Card
 Compliment
-Roast
 Rate Avatar
-Ship With Me
 
 Message context menu commands:
 Quote Message
 Save To Notes
 Make Embed From Message
 Count Words
+
+Hidden admin-only bot speech:
+Sai say Your message here
+S.A.I say Your message here
+Sai embed Title | Body | #57f287
+
+These are normal message triggers, not slash commands. If S.A.I has permission
+to delete messages in that channel, it deletes your trigger message first, then
+sends the bot message. The trigger is also ignored by S.A.I snipe/log storage.
+For the hidden effect, S.A.I needs Manage Messages and Send Messages in the
+channel.
 
 Notes, todos, reminders, and timezone settings are saved by Discord user ID in
 the persistent data file. Reminders are rescheduled when the bot restarts.

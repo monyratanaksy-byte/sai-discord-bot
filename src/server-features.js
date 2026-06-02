@@ -17,6 +17,7 @@ const voiceJoinTimes = new Map();
 const deletedMessages = new Map();
 const editedMessages = new Map();
 const reminderTimers = new Map();
+const hiddenCommandDeletes = new Set();
 
 export const featureCommands = [
   new SlashCommandBuilder()
@@ -437,6 +438,11 @@ export async function handleFeatureMessageCreate(message) {
   const guildData = await getGuildData(message.guild.id);
   guildData.analytics.messages += 1;
 
+  if (await handleAdminSayCommand(message)) {
+    await updateGuildData(message.guild.id, () => {});
+    return;
+  }
+
   if (await handleLordReminderCommand(message)) {
     await updateGuildData(message.guild.id, () => {});
     return;
@@ -486,6 +492,7 @@ export async function handleFeatureMessageCreate(message) {
 
 export async function handleFeatureMessageDelete(message) {
   if (!message.guild || message.author?.bot || !message.content) return;
+  if (hiddenCommandDeletes.delete(message.id)) return;
   deletedMessages.set(message.channel.id, {
     author: message.author.tag,
     content: message.content,
@@ -1285,6 +1292,37 @@ async function runBotProfile(interaction) {
   return true;
 }
 
+async function handleAdminSayCommand(message) {
+  const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+  if (!member?.permissions.has(PermissionFlagsBits.Administrator)) return false;
+
+  const parsed = parseAdminSayCommand(message.content);
+  if (!parsed) return false;
+
+  hiddenCommandDeletes.add(message.id);
+  await message.delete().catch(() => hiddenCommandDeletes.delete(message.id));
+
+  if (parsed.type === 'embed') {
+    const color = parseHexColor(parsed.color) ?? 0x5865f2;
+    await message.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(color)
+          .setTitle(parsed.title)
+          .setDescription(parsed.body),
+      ],
+      allowedMentions: { parse: [] },
+    }).catch(() => {});
+    return true;
+  }
+
+  await message.channel.send({
+    content: parsed.text,
+    allowedMentions: { parse: [] },
+  }).catch(() => {});
+  return true;
+}
+
 async function handleLordReminderCommand(message) {
   const member = await message.guild.members.fetch(message.author.id).catch(() => null);
   if (!member?.permissions.has(PermissionFlagsBits.Administrator)) return false;
@@ -1847,6 +1885,40 @@ function getEmojiSource(attachment, imageUrl, emojiInput) {
 
   const extension = customEmoji.groups.animated ? 'gif' : 'png';
   return `https://cdn.discordapp.com/emojis/${customEmoji.groups.id}.${extension}?quality=lossless`;
+}
+
+function parseAdminSayCommand(content) {
+  const normalized = content.trim();
+  const sayMatch = normalized.match(/^(?:s\.?a\.?i|sai)\s+say\s+(?<text>[\s\S]+)$/i);
+  if (sayMatch?.groups?.text) {
+    return {
+      type: 'text',
+      text: sanitizeBotMessage(sayMatch.groups.text),
+    };
+  }
+
+  const embedMatch = normalized.match(/^(?:s\.?a\.?i|sai)\s+embed\s+(?<payload>[\s\S]+)$/i);
+  if (embedMatch?.groups?.payload) {
+    const parts = embedMatch.groups.payload.split('|').map((part) => part.trim()).filter(Boolean);
+    if (parts.length < 2) return null;
+    return {
+      type: 'embed',
+      title: sanitizeBotMessage(parts[0], 256),
+      body: sanitizeBotMessage(parts[1], 2000),
+      color: parts[2],
+    };
+  }
+
+  return null;
+}
+
+function sanitizeBotMessage(text, max = 1000) {
+  return trim(text.replace(/@everyone/gi, '@ everyone').replace(/@here/gi, '@ here'), max);
+}
+
+function parseHexColor(value) {
+  const match = value?.trim().match(/^#?([0-9a-f]{6})$/i);
+  return match ? Number.parseInt(match[1], 16) : null;
 }
 
 function parseLordNicknameCommand(message) {
