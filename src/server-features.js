@@ -310,6 +310,58 @@ export const featureCommands = [
             .setRequired(false),
         ),
     ),
+  new SlashCommandBuilder()
+    .setName('role')
+    .setDescription('Admin role tools.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((sub) =>
+      sub
+        .setName('give-everyone')
+        .setDescription('Give a role to every non-bot member.')
+        .addRoleOption((option) =>
+          option.setName('role').setDescription('Role to give everyone.').setRequired(true),
+        ),
+    ),
+  new SlashCommandBuilder()
+    .setName('verification')
+    .setDescription('Admin verification panel tools.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((sub) =>
+      sub
+        .setName('create')
+        .setDescription('Post a professional verification panel.')
+        .addChannelOption((option) =>
+          option
+            .setName('channel')
+            .setDescription('Where to post the verification panel.')
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(true),
+        )
+        .addRoleOption((option) =>
+          option
+            .setName('role')
+            .setDescription('Role given after verification.')
+            .setRequired(true),
+        ),
+    ),
+  new SlashCommandBuilder()
+    .setName('bot')
+    .setDescription('Admin bot profile tools.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((sub) =>
+      sub
+        .setName('profile')
+        .setDescription('Update S.A.I username, avatar, or server display name.')
+        .addStringOption((option) =>
+          option.setName('username').setDescription('New global bot username.').setRequired(false),
+        )
+        .addStringOption((option) =>
+          option.setName('avatar_url').setDescription('Direct image URL for bot avatar.').setRequired(false),
+        )
+        .addStringOption((option) =>
+          option.setName('display_name').setDescription('Bot display name/nickname in this server.').setRequired(false),
+        ),
+    ),
 ].map((command) => command.toJSON());
 
 export async function initFeatures(client) {
@@ -335,6 +387,9 @@ export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'backup') return runBackup(interaction);
   if (interaction.commandName === 'shop') return runShop(interaction);
   if (interaction.commandName === 'emoji') return runEmoji(interaction);
+  if (interaction.commandName === 'role') return runRole(interaction);
+  if (interaction.commandName === 'verification') return runVerification(interaction);
+  if (interaction.commandName === 'bot') return runBotProfile(interaction);
   return false;
 }
 
@@ -410,7 +465,9 @@ export async function handleFeatureMessageCreate(message) {
     return;
   }
 
-  if (guildData.config.automodEnabled && shouldAutoMod(message.content)) {
+  const isAdmin =
+    message.member?.permissions?.has(PermissionFlagsBits.Administrator) || false;
+  if (guildData.config.automodEnabled && !isAdmin && shouldAutoMod(message.content)) {
     await message.delete().catch(() => {});
     await message.channel
       .send(`${message.author}, that message was blocked by AutoMod.`)
@@ -1110,6 +1167,121 @@ async function runEmoji(interaction) {
 
   await interaction.editReply(`Added emoji ${emoji} as \`:${emoji.name}:\`.`);
   await logEvent(interaction.guild, 'Emoji Added', `${interaction.user.tag} added ${emoji} as \`:${emoji.name}:\`.`);
+  return true;
+}
+
+async function runRole(interaction) {
+  if (interaction.options.getSubcommand() !== 'give-everyone') return false;
+  const role = interaction.options.getRole('role', true);
+
+  if (role.managed || role.id === interaction.guild.id) {
+    await interaction.reply({ content: 'That role cannot be assigned manually.', ephemeral: true });
+    return true;
+  }
+
+  const me = await interaction.guild.members.fetchMe().catch(() => null);
+  if (!me?.permissions.has(PermissionFlagsBits.ManageRoles) || role.position >= me.roles.highest.position) {
+    await interaction.reply({
+      content: 'S.A.I needs Manage Roles and its role must be above the role you want to give.',
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  const members = await interaction.guild.members.fetch();
+  let added = 0;
+  let skipped = 0;
+
+  for (const member of members.values()) {
+    if (member.user.bot || member.roles.cache.has(role.id)) {
+      skipped += 1;
+      continue;
+    }
+    await member.roles.add(role, `S.A.I give everyone requested by ${interaction.user.tag}.`)
+      .then(() => {
+        added += 1;
+      })
+      .catch(() => {
+        skipped += 1;
+      });
+  }
+
+  await interaction.editReply(`Finished. Added ${role} to ${added} member(s). Skipped ${skipped}.`);
+  await logEvent(interaction.guild, 'Role Given To Everyone', `${interaction.user.tag} gave ${role} to ${added} member(s).`);
+  return true;
+}
+
+async function runVerification(interaction) {
+  if (interaction.options.getSubcommand() !== 'create') return false;
+  const channel = interaction.options.getChannel('channel', true);
+  const role = interaction.options.getRole('role', true);
+
+  await updateGuildData(interaction.guildId, (guildData) => {
+    guildData.config.welcomeChannelId = channel.id;
+    guildData.config.verifiedRoleId = role.id;
+    guildData.config.rulesText = 'Click the verification button to unlock the server.';
+  });
+
+  await channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle('Server Verification')
+        .setDescription('Click the button below to verify your account and unlock the rest of the server.')
+        .addFields(
+          { name: 'Before You Verify', value: 'Please read the rules and respect the community.' },
+          { name: 'Access', value: `Verification gives you the ${role} role.` },
+        ),
+    ],
+    components: [verifyRow()],
+  });
+  await interaction.reply({ content: `Verification panel posted in ${channel}.`, ephemeral: true });
+  return true;
+}
+
+async function runBotProfile(interaction) {
+  if (interaction.options.getSubcommand() !== 'profile') return false;
+  const username = interaction.options.getString('username');
+  const avatarUrl = interaction.options.getString('avatar_url');
+  const displayName = interaction.options.getString('display_name');
+
+  if (!username && !avatarUrl && !displayName) {
+    await interaction.reply({
+      content: 'Give me at least one of: username, avatar_url, or display_name.',
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  const updates = [];
+
+  if (username || avatarUrl) {
+    const clientUpdate = {};
+    if (username) clientUpdate.username = username.slice(0, 32);
+    if (avatarUrl) clientUpdate.avatar = avatarUrl;
+    await interaction.client.user.set(clientUpdate)
+      .then(() => updates.push('global profile'))
+      .catch((error) => {
+        console.error('Bot profile update failed:', error);
+      });
+  }
+
+  if (displayName) {
+    const me = await interaction.guild.members.fetchMe().catch(() => null);
+    await me?.setNickname(displayName.slice(0, 32), `S.A.I display name changed by ${interaction.user.tag}.`)
+      .then(() => updates.push('server display name'))
+      .catch((error) => {
+        console.error('Bot display name update failed:', error);
+      });
+  }
+
+  await interaction.editReply(
+    updates.length
+      ? `Updated ${updates.join(' and ')}.`
+      : 'Could not update profile. Check image URL, permissions, and Discord username/avatar rate limits.',
+  );
   return true;
 }
 

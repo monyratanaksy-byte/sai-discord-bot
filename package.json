@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "deploy:commands": "node scripts/deploy-commands.js",
+    "deploy:global": "node scripts/deploy-global-commands.js",
     "package:wispbyte": "bash scripts/package-wispbyte.sh",
     "package:katabump": "bash scripts/package-katabump.sh"
   },

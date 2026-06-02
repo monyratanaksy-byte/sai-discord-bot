@@ -6,6 +6,7 @@ const dataFile = path.join(dataDir, 'sai-data.json');
 
 const defaultData = {
   guilds: {},
+  users: {},
 };
 
 let cachedData;
@@ -54,6 +55,19 @@ export async function updateGuildData(guildId, updater) {
   return guildData;
 }
 
+export async function getUserData(userId) {
+  const data = await loadData();
+  data.users[userId] ||= createUserData();
+  return data.users[userId];
+}
+
+export async function updateUserData(userId, updater) {
+  const userData = await getUserData(userId);
+  await updater(userData);
+  await saveData();
+  return userData;
+}
+
 export function createGuildData() {
   return {
     config: {
@@ -95,9 +109,19 @@ export function createGuildData() {
   };
 }
 
+export function createUserData() {
+  return {
+    notes: {},
+    todos: {},
+    reminders: {},
+    timezone: null,
+  };
+}
+
 function mergeDefaults(data) {
   const merged = structuredClone(defaultData);
   merged.guilds = data.guilds || {};
+  merged.users = data.users || {};
 
   for (const [guildId, guildData] of Object.entries(merged.guilds)) {
     merged.guilds[guildId] = {
@@ -111,6 +135,13 @@ function mergeDefaults(data) {
         ...createGuildData().analytics,
         ...(guildData.analytics || {}),
       },
+    };
+  }
+
+  for (const [userId, userData] of Object.entries(merged.users)) {
+    merged.users[userId] = {
+      ...createUserData(),
+      ...userData,
     };
   }
 

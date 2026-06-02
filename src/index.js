@@ -25,6 +25,13 @@ import {
   handleVoiceModal,
   handleVoiceStateUpdate,
 } from './voice-manager.js';
+import {
+  initUserUtilities,
+  isUserInstallCommandName,
+  runMessageContextCommand,
+  runUserContextCommand,
+  runUserUtilityChatInput,
+} from './user-utilities.js';
 
 requireConfig(['token', 'joinToCreateChannelId']);
 
@@ -45,6 +52,9 @@ client.once(Events.ClientReady, (readyClient) => {
   console.log(`S.A.I is online as ${readyClient.user.tag}`);
   initFeatures(readyClient).catch((error) => {
     console.error('Feature initialization failed:', error);
+  });
+  initUserUtilities(readyClient).catch((error) => {
+    console.error('User utility initialization failed:', error);
   });
   registerGuildCommands().catch((error) => {
     console.error('Slash command auto-registration failed:', error);
@@ -99,7 +109,22 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
+      if (isUserInstallCommandName(interaction.commandName)) {
+        await runUserUtilityChatInput(interaction);
+        return;
+      }
+
       await runSlashCommand(interaction);
+      return;
+    }
+
+    if (interaction.isUserContextMenuCommand()) {
+      await runUserContextCommand(interaction);
+      return;
+    }
+
+    if (interaction.isMessageContextMenuCommand()) {
+      await runMessageContextCommand(interaction);
       return;
     }
 

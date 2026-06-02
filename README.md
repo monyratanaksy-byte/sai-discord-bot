@@ -6,6 +6,8 @@ S.A.I is a Discord.js bot with:
 - Owner control panel buttons inside the new voice channel chat
 - Slash commands and `s!` prefix commands
 - User information and profile lookup commands
+- Server setup, verification, tickets, moderation, logging, roles, and utility tools
+- Safe Discord User Install utility commands that do not use AI, paid APIs, or external services
 
 ## Setup
 
@@ -47,7 +49,17 @@ https://discord.com/oauth2/authorize?client_id=1505710039820927067&permissions=8
 pnpm run deploy:commands
 ```
 
-7. Start the bot:
+7. Optional: deploy global User Install utility commands:
+
+```bash
+pnpm run deploy:global
+```
+
+In the Discord Developer Portal, open the S.A.I application, go to Installation,
+and enable both Guild Install and User Install. Keep `applications.commands`
+enabled for User Install.
+
+8. Start the bot:
 
 ```bash
 pnpm start
@@ -115,7 +127,7 @@ Then upload `/Users/monyratanaksy/Desktop/Project/sai-discord-bot-wisebyte.zip` 
 
 ## Commands
 
-Slash commands:
+Main guild slash commands:
 
 - `/ping`
 - `/userinfo [user]`
@@ -123,6 +135,27 @@ Slash commands:
 - `/coords from x y z`
 - `/admin status`
 - `/admin config`
+- `/setup template`
+- `/ticket panel`
+- `/mod warn`
+- `/poll create`
+- `/role give-everyone`
+- `/verification create`
+- `/bot profile`
+
+Global User Install utility commands include:
+
+- `/talk`, `/embed`, `/announce`, `/remind`
+- `/note`, `/todo`, `/timezone`, `/time`, `/timer`
+- `/choose`, `/8ball`, `/coinflip`, `/dice`, `/math`, `/color`
+- `/avatar`, `/banner`, `/userinfo-lite`, `/profile-card`
+- `/fancy`, `/mock`, `/emojify`, `/uppercase`, `/lowercase`, `/titlecase`, `/clean`
+
+User context menus include View Avatar, View Banner, User Info Lite, Profile
+Card, Compliment, Roast, Rate Avatar, and Ship With Me.
+
+Message context menus include Quote Message, Save To Notes, Make Embed From
+Message, and Count Words.
 
 Prefix commands:
 

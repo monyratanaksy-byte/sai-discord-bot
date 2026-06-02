@@ -36,7 +36,7 @@ if [ -f /home/container/package.json ]; then /usr/local/bin/npm install; fi; /us
 
 Expected healthy console output:
 S.A.I is online as S.A.I#2790
-Registered 21 slash commands for guild 1481641949651013765.
+Registered 24 slash commands for guild 1481641949651013765.
 
 Main setup commands:
 /setup template
@@ -49,6 +49,112 @@ Main setup commands:
 /setup booster
 /setup confession
 /emoji add
+/role give-everyone
+/verification create
+/bot profile
+
+One-command server setup:
+Use /setup template
+
+This creates the main categories, staff/verified/muted roles, welcome, rules,
+verify, ticket, logs, bot commands, temp text, stats, and join-to-create voice
+layout. Run it with an Administrator account.
+
+Verification panel:
+Use /verification create channel:#verify role:@Verified
+
+It sends a professional button panel saying:
+Click the button below to verify your account and unlock the rest of the server.
+
+Give everyone a role:
+Use /role give-everyone role:@RoleName
+
+Bot profile:
+Use /bot profile username:S.A.I display_name:S.A.I
+Optional avatar_url can change the bot avatar. Discord rate-limits bot username
+and avatar changes, so do not spam this command.
+
+AutoMod:
+AutoMod ignores members with Discord Administrator permission.
+
+Discord User Install support:
+S.A.I also has safe global utility commands that can be used through Discord
+User Install where Discord allows it. These commands do not manage servers,
+roles, channels, emojis, tickets, moderation, webhooks, or voice. They do not
+use AI APIs, paid APIs, or required external services.
+
+Enable User Install in Discord Developer Portal:
+1. Open the Discord Developer Portal.
+2. Open the S.A.I application.
+3. Go to Installation.
+4. Enable both Guild Install and User Install.
+5. For User Install, keep the applications.commands scope enabled.
+6. Keep normal bot/server install for admin, setup, mod, ticket, economy, and
+   voice commands.
+
+Deploy global user-installable commands:
+pnpm run deploy:global
+
+Keep guild commands deployed for your server:
+pnpm run deploy:commands
+
+Global user-installable slash commands:
+/talk
+/embed
+/announce
+/remind
+/note save, /note list, /note delete
+/todo add, /todo list, /todo done
+/choose
+/8ball
+/coinflip
+/dice
+/fancy
+/mock
+/emojify
+/uppercase
+/lowercase
+/titlecase
+/clean
+/avatar
+/banner
+/userinfo-lite
+/avatar-link
+/profile-card
+/timezone set
+/time
+/timer
+/math
+/color
+/password
+/roll
+/random-number
+/truth
+/dare
+/wyr
+/rps
+
+User context menu commands:
+View Avatar
+View Banner
+User Info Lite
+Profile Card
+Compliment
+Roast
+Rate Avatar
+Ship With Me
+
+Message context menu commands:
+Quote Message
+Save To Notes
+Make Embed From Message
+Count Words
+
+Notes, todos, reminders, and timezone settings are saved by Discord user ID in
+the persistent data file. Reminders are rescheduled when the bot restarts.
+
+/qr was intentionally not added because it would need an extra QR dependency or
+external service.
 
 Admin-only word trigger:
 I Sai command @user to nick yourself New Nickname
