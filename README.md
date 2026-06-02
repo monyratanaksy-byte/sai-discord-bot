@@ -156,8 +156,14 @@ as a normal channel message from S.A.I. If Discord blocks normal channel sends
 in that User Install context, S.A.I falls back to a public interaction follow-up;
 that fallback may still show Discord's command attribution line.
 
-`/embed` and `/announce` include a `private` option. Public slash command
-responses can still show Discord's command attribution line.
+These commands include a `public` option: `/avatar`, `/banner`,
+`/userinfo-lite`, `/avatar-link`, `/profile-card`, `/embed`, `/announce`,
+`/choose`, `/8ball`, `/coinflip`, `/dice`, `/roll`, `/random-number`, `/math`,
+and `/color`. If `public` is false or omitted, the response is private. If
+`public` is true, S.A.I posts publicly.
+
+Notes, todos, reminders, timers, and timezone setup stay private only. Public
+slash command responses can still show Discord's command attribution line.
 
 User context menus include View Avatar, View Banner, User Info Lite, Profile
 Card, Compliment, and Rate Avatar.

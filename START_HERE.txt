@@ -129,9 +129,16 @@ that User Install context, S.A.I falls back to a public interaction follow-up.
 That fallback may still show the "used /talk" line because Discord controls
 public interaction display.
 
-/embed and /announce have a private option. Public slash command responses can
-still show Discord's "used command" line because that is a Discord client
-behavior.
+Visibility:
+These commands have a public option: /avatar, /banner, /userinfo-lite,
+/avatar-link, /profile-card, /embed, /announce, /choose, /8ball, /coinflip,
+/dice, /roll, /random-number, /math, and /color.
+
+If public is false or omitted, the response is private. If public is true, S.A.I
+posts publicly. Public slash command responses can still show Discord's "used
+command" line because that is a Discord client behavior.
+
+Notes, todos, reminders, timers, and timezone setup stay private only.
 
 User context menu commands:
 View Avatar

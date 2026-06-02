@@ -30,12 +30,12 @@ export const userInstallCommands = [
     stringOption('title', 'Embed title.', true, 1, 256),
     stringOption('body', 'Embed body.', true, 1, 2000),
     stringOption('color', 'Hex color, like #57f287.', false, 3, 7),
-    booleanOption('private', 'Only show the response to you.', false),
+    publicOption(),
   ]),
   slash('announce', 'Create an announcement embed.', [
     stringOption('title', 'Announcement title.', true, 1, 256),
     stringOption('body', 'Announcement body.', true, 1, 2000),
-    booleanOption('private', 'Only show the response to you.', false),
+    publicOption(),
   ]),
   slash('remind', 'Save a personal reminder.', [
     stringOption('text', 'Reminder text.', true, 1, 1000),
@@ -53,29 +53,32 @@ export const userInstallCommands = [
   ]),
   slash('choose', 'Choose from comma-separated options.', [
     stringOption('options', 'Options separated by commas or |.', true, 1, 1000),
+    publicOption(),
   ]),
   slash('8ball', 'Ask the magic 8-ball.', [
     stringOption('question', 'Question.', true, 1, 500),
+    publicOption(),
   ]),
-  slash('coinflip', 'Flip a coin.'),
-  slash('dice', 'Roll a die.', [intOption('sides', 'Number of sides.', false, 2, 1000000)]),
-  slash('avatar', 'View a user avatar.', [userOption()]),
-  slash('banner', 'View a user banner.', [userOption()]),
-  slash('userinfo-lite', 'View light user info.', [userOption()]),
-  slash('avatar-link', 'Get avatar link.', [userOption()]),
-  slash('profile-card', 'View a small profile card.', [userOption()]),
+  slash('coinflip', 'Flip a coin.', [publicOption()]),
+  slash('dice', 'Roll a die.', [intOption('sides', 'Number of sides.', false, 2, 1000000), publicOption()]),
+  slash('avatar', 'View a user avatar.', [userOption(), publicOption()]),
+  slash('banner', 'View a user banner.', [userOption(), publicOption()]),
+  slash('userinfo-lite', 'View light user info.', [userOption(), publicOption()]),
+  slash('avatar-link', 'Get avatar link.', [userOption(), publicOption()]),
+  slash('profile-card', 'View a small profile card.', [userOption(), publicOption()]),
   slash('timezone', 'Personal timezone settings.', [
     sub('set', 'Set your timezone.', [stringOption('timezone', 'IANA timezone, like Australia/Melbourne.', true, 1, 80)]),
   ]),
   slash('time', 'Show the time.', [stringOption('timezone', 'IANA timezone. Defaults to your saved timezone.', false, 1, 80)]),
   slash('timer', 'Start a personal timer.', [intOption('minutes', 'Minutes from now.', true, 1, 43200)]),
-  slash('math', 'Calculate safe arithmetic.', [stringOption('expression', 'Example: (2 + 3) * 4.', true, 1, 200)]),
-  slash('color', 'Preview a hex color.', [stringOption('hex', 'Hex color, like #57f287.', true, 3, 7)]),
+  slash('math', 'Calculate safe arithmetic.', [stringOption('expression', 'Example: (2 + 3) * 4.', true, 1, 200), publicOption()]),
+  slash('color', 'Preview a hex color.', [stringOption('hex', 'Hex color, like #57f287.', true, 3, 7), publicOption()]),
   slash('password', 'Generate a password.', [intOption('length', 'Password length.', false, 8, 64)]),
-  slash('roll', 'Roll from 1 to max.', [intOption('max', 'Maximum roll.', false, 2, 1000000)]),
+  slash('roll', 'Roll from 1 to max.', [intOption('max', 'Maximum roll.', false, 2, 1000000), publicOption()]),
   slash('random-number', 'Random number in a range.', [
     intOption('min', 'Minimum.', true, -1000000, 1000000),
     intOption('max', 'Maximum.', true, -1000000, 1000000),
+    publicOption(),
   ]),
   contextUser('View Avatar'),
   contextUser('View Banner'),
@@ -114,10 +117,10 @@ export async function runUserUtilityChatInput(interaction) {
   if (name === 'remind') return runPersonalReminder(interaction, interaction.options.getString('text', true), interaction.options.getInteger('minutes', true));
   if (name === 'note') return runNote(interaction);
   if (name === 'todo') return runTodo(interaction);
-  if (name === 'choose') return replyPrivate(interaction, pick(splitOptions(interaction.options.getString('options', true))) || 'Give me at least one option.');
-  if (name === '8ball') return replyPrivate(interaction, pick(['Yes.', 'No.', 'Maybe.', 'Ask again later.', 'Absolutely.', 'Not looking good.']));
-  if (name === 'coinflip') return replyPrivate(interaction, pick(['Heads', 'Tails']));
-  if (name === 'dice') return replyPrivate(interaction, `You rolled **${randomInt(1, interaction.options.getInteger('sides') || 6)}**.`);
+  if (name === 'choose') return replyVisible(interaction, pick(splitOptions(interaction.options.getString('options', true))) || 'Give me at least one option.');
+  if (name === '8ball') return replyVisible(interaction, pick(['Yes.', 'No.', 'Maybe.', 'Ask again later.', 'Absolutely.', 'Not looking good.']));
+  if (name === 'coinflip') return replyVisible(interaction, pick(['Heads', 'Tails']));
+  if (name === 'dice') return replyVisible(interaction, `You rolled **${randomInt(1, interaction.options.getInteger('sides') || 6)}**.`);
   if (['avatar', 'banner', 'userinfo-lite', 'avatar-link', 'profile-card'].includes(name)) return runUserView(interaction, name);
   if (name === 'timezone') return runTimezone(interaction);
   if (name === 'time') return runTime(interaction);
@@ -125,7 +128,7 @@ export async function runUserUtilityChatInput(interaction) {
   if (name === 'math') return runMath(interaction);
   if (name === 'color') return runColor(interaction);
   if (name === 'password') return replyPrivate(interaction, `\`${makePassword(interaction.options.getInteger('length') || 16)}\``);
-  if (name === 'roll') return replyPrivate(interaction, `You rolled **${randomInt(1, interaction.options.getInteger('max') || 100)}**.`);
+  if (name === 'roll') return replyVisible(interaction, `You rolled **${randomInt(1, interaction.options.getInteger('max') || 100)}**.`);
   if (name === 'random-number') return runRandomNumber(interaction);
   return false;
 }
@@ -183,7 +186,7 @@ async function runEmbed(interaction) {
   const color = parseColor(interaction.options.getString('color')) ?? 0x5865f2;
   return interaction.reply({
     embeds: [new EmbedBuilder().setColor(color).setTitle(interaction.options.getString('title', true)).setDescription(interaction.options.getString('body', true))],
-    ephemeral: interaction.options.getBoolean('private') ?? false,
+    ephemeral: !isPublic(interaction),
     allowedMentions: { parse: [] },
   });
 }
@@ -191,7 +194,7 @@ async function runEmbed(interaction) {
 async function runAnnounce(interaction) {
   return interaction.reply({
     embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(interaction.options.getString('title', true)).setDescription(interaction.options.getString('body', true)).setTimestamp()],
-    ephemeral: interaction.options.getBoolean('private') ?? false,
+    ephemeral: !isPublic(interaction),
     allowedMentions: { parse: [] },
   });
 }
@@ -275,28 +278,28 @@ async function runUserView(interaction, name) {
   if (name === 'avatar') return sendAvatar(interaction, user);
   if (name === 'banner') return sendBanner(interaction, user);
   if (name === 'userinfo-lite') return sendUserInfoLite(interaction, user);
-  if (name === 'avatar-link') return replyPrivate(interaction, user.displayAvatarURL({ size: 4096 }));
+  if (name === 'avatar-link') return replyVisible(interaction, user.displayAvatarURL({ size: 4096 }));
   return sendProfileCard(interaction, user);
 }
 
 async function sendAvatar(interaction, user) {
-  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${user.username}'s avatar`).setImage(user.displayAvatarURL({ size: 4096 }))], ephemeral: true });
+  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${user.username}'s avatar`).setImage(user.displayAvatarURL({ size: 4096 }))], ephemeral: !isPublic(interaction) });
 }
 
 async function sendBanner(interaction, user) {
   const fullUser = await interaction.client.users.fetch(user.id, { force: true }).catch(() => user);
   const banner = fullUser.bannerURL?.({ size: 4096 });
   if (!banner) return replyPrivate(interaction, 'Banner unavailable for that user.');
-  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${user.username}'s banner`).setImage(banner)], ephemeral: true });
+  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${user.username}'s banner`).setImage(banner)], ephemeral: !isPublic(interaction) });
 }
 
 async function sendUserInfoLite(interaction, user) {
-  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(user.username).setThumbnail(user.displayAvatarURL({ size: 256 })).addFields({ name: 'User ID', value: user.id }, { name: 'Created', value: `<t:${Math.floor(user.createdTimestamp / 1000)}:F>` })], ephemeral: true });
+  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(user.username).setThumbnail(user.displayAvatarURL({ size: 256 })).addFields({ name: 'User ID', value: user.id }, { name: 'Created', value: `<t:${Math.floor(user.createdTimestamp / 1000)}:F>` })], ephemeral: !isPublic(interaction) });
 }
 
 async function sendProfileCard(interaction, user) {
   const fullUser = await interaction.client.users.fetch(user.id, { force: true }).catch(() => user);
-  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setAuthor({ name: fullUser.globalName || fullUser.username, iconURL: fullUser.displayAvatarURL({ size: 256 }) }).setThumbnail(fullUser.displayAvatarURL({ size: 512 })).addFields({ name: 'Username', value: fullUser.tag }, { name: 'ID', value: fullUser.id })], ephemeral: true });
+  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setAuthor({ name: fullUser.globalName || fullUser.username, iconURL: fullUser.displayAvatarURL({ size: 256 }) }).setThumbnail(fullUser.displayAvatarURL({ size: 512 })).addFields({ name: 'Username', value: fullUser.tag }, { name: 'ID', value: fullUser.id })], ephemeral: !isPublic(interaction) });
 }
 
 async function runTimezone(interaction) {
@@ -324,7 +327,7 @@ async function runTime(interaction) {
 
 async function runMath(interaction) {
   try {
-    return replyPrivate(interaction, `\`${safeMath(interaction.options.getString('expression', true))}\``);
+    return replyVisible(interaction, `\`${safeMath(interaction.options.getString('expression', true))}\``);
   } catch {
     return replyPrivate(interaction, 'Invalid expression. Allowed: numbers, +, -, *, /, %, ^, parentheses.');
   }
@@ -333,14 +336,14 @@ async function runMath(interaction) {
 async function runColor(interaction) {
   const color = parseColor(interaction.options.getString('hex', true));
   if (color === null) return replyPrivate(interaction, 'Invalid hex color.');
-  return interaction.reply({ embeds: [new EmbedBuilder().setColor(color).setTitle(`#${color.toString(16).padStart(6, '0').toUpperCase()}`)], ephemeral: true });
+  return interaction.reply({ embeds: [new EmbedBuilder().setColor(color).setTitle(`#${color.toString(16).padStart(6, '0').toUpperCase()}`)], ephemeral: !isPublic(interaction) });
 }
 
 async function runRandomNumber(interaction) {
   const min = interaction.options.getInteger('min', true);
   const max = interaction.options.getInteger('max', true);
   if (min > max) return replyPrivate(interaction, 'Minimum must be less than or equal to maximum.');
-  return replyPrivate(interaction, String(randomInt(min, max)));
+  return replyVisible(interaction, String(randomInt(min, max)));
 }
 
 async function runRps(interaction) {
@@ -359,8 +362,11 @@ function sub(name, description, options = []) { return { type: 1, name, descript
 function stringOption(name, description, required, min_length, max_length) { return { type: STRING, name, description, required, min_length, max_length }; }
 function intOption(name, description, required, min_value, max_value) { return { type: INTEGER, name, description, required, min_value, max_value }; }
 function booleanOption(name, description, required) { return { type: BOOLEAN, name, description, required }; }
+function publicOption() { return booleanOption('public', 'Post publicly instead of only showing you.', false); }
 function userOption() { return { type: USER, name: 'user', description: 'User.', required: false }; }
 function replyPrivate(interaction, content) { return interaction.reply({ content: limit(content), ephemeral: true, allowedMentions: { parse: [] } }); }
+function replyVisible(interaction, content) { return interaction.reply({ content: limit(content), ephemeral: !isPublic(interaction), allowedMentions: { parse: [] } }); }
+function isPublic(interaction) { return interaction.options.getBoolean('public') === true; }
 function limit(text, max = 1900) { return String(text || '').slice(0, max); }
 function splitOptions(text) { return text.split(/[|,]/).map((item) => item.trim()).filter(Boolean); }
 function pick(items) { return items[Math.floor(Math.random() * items.length)]; }
