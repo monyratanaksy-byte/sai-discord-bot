@@ -123,9 +123,15 @@ Global user-installable slash commands:
 /roll
 /random-number
 
-/talk, /embed, and /announce have a private option. Public slash command
-responses can still show Discord's "used command" line because that is a
-Discord client behavior.
+/talk replies privately with "Sent.", then tries to send the actual message as
+a normal channel message from S.A.I. If Discord blocks normal channel sends in
+that User Install context, S.A.I falls back to a public interaction follow-up.
+That fallback may still show the "used /talk" line because Discord controls
+public interaction display.
+
+/embed and /announce have a private option. Public slash command responses can
+still show Discord's "used command" line because that is a Discord client
+behavior.
 
 User context menu commands:
 View Avatar

@@ -24,8 +24,7 @@ const installContexts = {
 
 export const userInstallCommands = [
   slash('talk', 'Repeat a safe message.', [
-    stringOption('message', 'Message to send.', true, 1, 1000),
-    booleanOption('private', 'Only show the response to you.', false),
+    stringOption('message', 'Message to send.', true, 1, 2000),
   ]),
   slash('embed', 'Create a simple embed.', [
     stringOption('title', 'Embed title.', true, 1, 256),
@@ -169,9 +168,15 @@ export async function runMessageContextCommand(interaction) {
 }
 
 async function runTalk(interaction) {
-  const message = sanitizeTalk(interaction.options.getString('message', true));
-  const isPrivate = interaction.options.getBoolean('private') ?? false;
-  return interaction.reply({ content: message, ephemeral: isPrivate, allowedMentions: { parse: [] } });
+  const message = interaction.options.getString('message', true);
+  await interaction.reply({ content: 'Sent.', ephemeral: true });
+
+  try {
+    await interaction.channel.send({ content: message });
+  } catch {
+    await interaction.followUp({ content: message });
+  }
+  return true;
 }
 
 async function runEmbed(interaction) {
@@ -356,8 +361,6 @@ function intOption(name, description, required, min_value, max_value) { return {
 function booleanOption(name, description, required) { return { type: BOOLEAN, name, description, required }; }
 function userOption() { return { type: USER, name: 'user', description: 'User.', required: false }; }
 function replyPrivate(interaction, content) { return interaction.reply({ content: limit(content), ephemeral: true, allowedMentions: { parse: [] } }); }
-function replyPublic(interaction, content) { return interaction.reply({ content: limit(content, 1000), allowedMentions: { parse: [] } }); }
-function sanitizeTalk(text) { return text.replace(/@everyone/gi, '@ everyone').replace(/@here/gi, '@ here').slice(0, 1000); }
 function limit(text, max = 1900) { return String(text || '').slice(0, max); }
 function splitOptions(text) { return text.split(/[|,]/).map((item) => item.trim()).filter(Boolean); }
 function pick(items) { return items[Math.floor(Math.random() * items.length)]; }

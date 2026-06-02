@@ -151,8 +151,13 @@ Global User Install utility commands include:
 - `/avatar`, `/banner`, `/userinfo-lite`, `/profile-card`
 - `/password`, `/roll`, `/random-number`
 
-`/talk`, `/embed`, and `/announce` include a `private` option. Public slash
-command responses can still show Discord's command attribution line.
+`/talk` replies privately with `Sent.`, then tries to send the actual message
+as a normal channel message from S.A.I. If Discord blocks normal channel sends
+in that User Install context, S.A.I falls back to a public interaction follow-up;
+that fallback may still show Discord's command attribution line.
+
+`/embed` and `/announce` include a `private` option. Public slash command
+responses can still show Discord's command attribution line.
 
 User context menus include View Avatar, View Banner, User Info Lite, Profile
 Card, Compliment, and Rate Avatar.
