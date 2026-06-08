@@ -32,6 +32,7 @@ import {
   runUserContextCommand,
   runUserUtilityChatInput,
 } from './user-utilities.js';
+import { initDashboardSync } from './dashboard-sync.js';
 
 requireConfig(['token', 'joinToCreateChannelId']);
 
@@ -56,6 +57,7 @@ client.once(Events.ClientReady, (readyClient) => {
   initUserUtilities(readyClient).catch((error) => {
     console.error('User utility initialization failed:', error);
   });
+  initDashboardSync(readyClient);
   registerGuildCommands().catch((error) => {
     console.error('Slash command auto-registration failed:', error);
   });

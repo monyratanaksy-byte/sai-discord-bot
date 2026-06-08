@@ -206,3 +206,15 @@ Room owner controls:
 - Delete room
 
 Temporary rooms are deleted automatically when empty.
+
+## Web Dashboard
+
+The separate Netlify dashboard is available at:
+
+https://sai-discord-dashboard.netlify.app
+
+The Katabump bot connects through `DASHBOARD_API_URL` and
+`DASHBOARD_BOT_SECRET`. The dashboard uses Discord OAuth, filters servers by
+Administrator permission, stores configuration in Netlify Blobs, and queues
+signed actions for the bot. The Discord bot token is never exposed to the
+browser.

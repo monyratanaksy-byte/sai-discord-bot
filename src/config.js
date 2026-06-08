@@ -6,6 +6,8 @@ export const config = {
   guildId: process.env.GUILD_ID,
   joinToCreateChannelId: process.env.JOIN_TO_CREATE_CHANNEL_ID,
   prefix: process.env.PREFIX || 's!',
+  dashboardApiUrl: process.env.DASHBOARD_API_URL,
+  dashboardBotSecret: process.env.DASHBOARD_BOT_SECRET,
 };
 
 export function requireConfig(keys) {
