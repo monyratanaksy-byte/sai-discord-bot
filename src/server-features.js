@@ -1552,6 +1552,8 @@ async function recordVoiceTime(guild, userId, now) {
 
   await updateGuildData(guild.id, (guildData) => {
     guildData.analytics.voiceSeconds += seconds;
+    const progress = getUserProgress(guildData, userId);
+    progress.voiceSeconds += seconds;
     if (guildData.config.voiceRewardsEnabled) {
       addUserProgress(guildData, userId, Math.floor(seconds / 30), guildData.config.economyEnabled ? Math.floor(seconds / 120) : 0);
     }
@@ -1843,8 +1845,9 @@ function addUserProgress(guildData, userId, xp, coins) {
 }
 
 function getUserProgress(guildData, userId) {
-  guildData.levels[userId] ||= { xp: 0, level: 1, coins: 0 };
+  guildData.levels[userId] ||= { xp: 0, level: 1, coins: 0, voiceSeconds: 0 };
   guildData.levels[userId].coins ||= 0;
+  guildData.levels[userId].voiceSeconds ||= 0;
   return guildData.levels[userId];
 }
 

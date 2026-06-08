@@ -32,7 +32,7 @@ import {
   runUserContextCommand,
   runUserUtilityChatInput,
 } from './user-utilities.js';
-import { initDashboardSync } from './dashboard-sync.js';
+import { initDashboardSync, recordDashboardMessage } from './dashboard-sync.js';
 
 requireConfig(['token', 'joinToCreateChannelId']);
 
@@ -42,6 +42,7 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildModeration,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildPresences,
@@ -69,6 +70,8 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
+  recordDashboardMessage(message);
+
   await handleFeatureMessageCreate(message).catch((error) => {
     console.error('Feature message handler failed:', error);
   });
