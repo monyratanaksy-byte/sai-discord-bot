@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -18,6 +19,7 @@ const deletedMessages = new Map();
 const editedMessages = new Map();
 const reminderTimers = new Map();
 const hiddenCommandDeletes = new Set();
+const recentMessageTimes = new Map();
 
 export const featureCommands = [
   new SlashCommandBuilder()
@@ -190,6 +192,12 @@ export const featureCommands = [
     )
     .addSubcommand((sub) =>
       sub
+        .setName('unwarn')
+        .setDescription('Remove a warning by case number.')
+        .addIntegerOption((option) => option.setName('case').setDescription('Case number.').setRequired(true)),
+    )
+    .addSubcommand((sub) =>
+      sub
         .setName('timeout')
         .setDescription('Timeout a member.')
         .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
@@ -198,9 +206,23 @@ export const featureCommands = [
     )
     .addSubcommand((sub) =>
       sub
+        .setName('untimeout')
+        .setDescription('Remove a member timeout.')
+        .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+        .addStringOption((option) => option.setName('reason').setDescription('Reason.').setRequired(false)),
+    )
+    .addSubcommand((sub) =>
+      sub
         .setName('kick')
         .setDescription('Kick a member.')
         .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+        .addStringOption((option) => option.setName('reason').setDescription('Reason.').setRequired(false)),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('unban')
+        .setDescription('Unban a user by ID.')
+        .addStringOption((option) => option.setName('user_id').setDescription('Discord user ID.').setRequired(true))
         .addStringOption((option) => option.setName('reason').setDescription('Reason.').setRequired(false)),
     )
     .addSubcommand((sub) =>
@@ -471,15 +493,30 @@ export async function handleFeatureMessageCreate(message) {
     return;
   }
 
+  const responder = Object.values(guildData.autoresponders || {}).find((item) =>
+    item.enabled !== false && message.content.toLowerCase().includes(String(item.trigger || '').toLowerCase()));
+  if (responder?.response) {
+    await message.channel.send({ content: responder.response, allowedMentions: { parse: [] } }).catch(() => {});
+  }
+
   const isAdmin =
     message.member?.permissions?.has(PermissionFlagsBits.Administrator) || false;
-  if (guildData.config.automodEnabled && !isAdmin && shouldAutoMod(message.content)) {
+  const exemptRole = message.member?.roles.cache.some((role) => guildData.config.automodExemptRoleIds?.includes(role.id));
+  const exemptChannel = guildData.config.automodExemptChannelIds?.includes(message.channelId);
+  const automodReason = getAutoModReason(message, guildData);
+  if (guildData.config.automodEnabled && !isAdmin && !exemptRole && !exemptChannel && automodReason) {
     await message.delete().catch(() => {});
     await message.channel
       .send(`${message.author}, that message was blocked by AutoMod.`)
       .then((sent) => setTimeout(() => sent.delete().catch(() => {}), 5000))
       .catch(() => {});
-    await logEvent(message.guild, 'AutoMod', `${message.author.tag} was blocked in ${message.channel}.`);
+    await createModerationCase(message.guild.id, {
+      type: 'automod',
+      userId: message.author.id,
+      moderatorId: message.client.user.id,
+      reason: automodReason,
+    });
+    await logEvent(message.guild, 'AutoMod', `${message.author.tag} was blocked in ${message.channel}: ${automodReason}`);
     return;
   }
 
@@ -875,18 +912,45 @@ async function runMod(interaction) {
     return true;
   }
 
+  if (sub === 'unwarn') {
+    const caseNumber = interaction.options.getInteger('case', true);
+    let removed = null;
+    await updateGuildData(interaction.guildId, (guildData) => {
+      removed = guildData.moderationCases.find((item) => item.caseNumber === caseNumber && item.type === 'warn' && !item.revokedAt);
+      if (removed) {
+        removed.revokedAt = Date.now();
+        removed.revokedBy = interaction.user.id;
+        const warnings = guildData.warnings[removed.userId] || [];
+        guildData.warnings[removed.userId] = warnings.filter((warning) => warning.caseNumber !== caseNumber);
+      }
+    });
+    await interaction.reply({ content: removed ? `Removed warning case #${caseNumber}.` : `Active warning case #${caseNumber} was not found.`, ephemeral: true });
+    return true;
+  }
+
+  if (sub === 'unban') {
+    const userId = interaction.options.getString('user_id', true);
+    await interaction.guild.members.unban(userId, reason);
+    const caseItem = await createModerationCase(interaction.guildId, { type: 'unban', userId, moderatorId: interaction.user.id, reason });
+    await interaction.reply({ content: `Unbanned <@${userId}>. Case #${caseItem.caseNumber}.`, ephemeral: true });
+    return true;
+  }
+
   const member = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
 
   if (sub === 'warn') {
+    let caseItem;
     await updateGuildData(interaction.guildId, (guildData) => {
+      caseItem = addModerationCase(guildData, { type: 'warn', userId: targetUser.id, moderatorId: interaction.user.id, reason });
       guildData.warnings[targetUser.id] ||= [];
       guildData.warnings[targetUser.id].push({
+        caseNumber: caseItem.caseNumber,
         reason,
         moderatorId: interaction.user.id,
         at: Date.now(),
       });
     });
-    await interaction.reply({ content: `Warned ${targetUser.tag}.`, ephemeral: true });
+    await interaction.reply({ content: `Warned ${targetUser.tag}. Case #${caseItem.caseNumber}.`, ephemeral: true });
     await logEvent(interaction.guild, 'Warning', `${targetUser.tag}: ${reason}`);
     return true;
   }
@@ -899,7 +963,7 @@ async function runMod(interaction) {
         new EmbedBuilder()
           .setColor(0xf1c40f)
           .setTitle(`${targetUser.tag} warnings`)
-          .setDescription(warnings.length ? warnings.map((warning, index) => `${index + 1}. ${warning.reason}`).join('\n') : 'No warnings.'),
+          .setDescription(warnings.length ? warnings.map((warning) => `#${warning.caseNumber || '?'} · ${warning.reason}`).join('\n') : 'No warnings.'),
       ],
       ephemeral: true,
     });
@@ -915,6 +979,9 @@ async function runMod(interaction) {
     const minutes = interaction.options.getInteger('minutes', true);
     await member.timeout(minutes * 60 * 1000, reason);
     await interaction.reply({ content: `Timed out ${targetUser.tag} for ${minutes} minutes.`, ephemeral: true });
+  } else if (sub === 'untimeout') {
+    await member.timeout(null, reason);
+    await interaction.reply({ content: `Removed ${targetUser.tag}'s timeout.`, ephemeral: true });
   } else if (sub === 'kick') {
     await member.kick(reason);
     await interaction.reply({ content: `Kicked ${targetUser.tag}.`, ephemeral: true });
@@ -923,8 +990,36 @@ async function runMod(interaction) {
     await interaction.reply({ content: `Banned ${targetUser.tag}.`, ephemeral: true });
   }
 
+  const caseItem = await createModerationCase(interaction.guildId, {
+    type: sub,
+    userId: targetUser.id,
+    moderatorId: interaction.user.id,
+    reason,
+    durationMinutes: sub === 'timeout' ? interaction.options.getInteger('minutes', true) : null,
+  });
+  await interaction.followUp({ content: `Moderation case #${caseItem.caseNumber} recorded.`, ephemeral: true }).catch(() => {});
   await logEvent(interaction.guild, `Mod ${sub}`, `${interaction.user.tag} used ${sub} on ${targetUser.tag}: ${reason}`);
   return true;
+}
+
+export async function createModerationCase(guildId, details) {
+  let item;
+  await updateGuildData(guildId, (guildData) => {
+    item = addModerationCase(guildData, details);
+  });
+  return item;
+}
+
+function addModerationCase(guildData, details) {
+  const item = {
+    id: crypto.randomUUID(),
+    caseNumber: guildData.nextCaseNumber++,
+    at: Date.now(),
+    ...details,
+  };
+  guildData.moderationCases.unshift(item);
+  guildData.moderationCases.splice(500);
+  return item;
 }
 
 async function runPoll(interaction) {
@@ -1853,6 +1948,24 @@ function getUserProgress(guildData, userId) {
 
 function shouldAutoMod(content) {
   return /(discord\.gg\/|discord\.com\/invite\/|@everyone|@here)/i.test(content);
+}
+
+function getAutoModReason(message, guildData) {
+  const content = message.content || '';
+  const settings = guildData.config;
+  if (settings.automodInviteLinks && /(discord\.gg\/|discord\.com\/invite\/)/i.test(content)) return 'Invite link';
+  if (settings.automodMassMentions && /@everyone|@here/i.test(content)) return 'Mass mention';
+  if ((message.mentions.users.size + message.mentions.roles.size) > Number(settings.automodMaxMentions || 5)) return 'Too many mentions';
+  if ((settings.automodBlockedWords || []).some((word) => word && content.toLowerCase().includes(word.toLowerCase()))) return 'Blocked word';
+  if (settings.automodSpam) {
+    const key = `${message.guild.id}:${message.author.id}`;
+    const now = Date.now();
+    const times = (recentMessageTimes.get(key) || []).filter((time) => now - time < 6000);
+    times.push(now);
+    recentMessageTimes.set(key, times);
+    if (times.length >= 5) return 'Message spam';
+  }
+  return null;
 }
 
 function verifyRow() {

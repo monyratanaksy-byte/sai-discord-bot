@@ -11,6 +11,9 @@ export const slashCommands = [
     .setName('ping')
     .setDescription('Check whether S.A.I is online.'),
   new SlashCommandBuilder()
+    .setName('help')
+    .setDescription('Show S.A.I commands and what you can use.'),
+  new SlashCommandBuilder()
     .setName('userinfo')
     .setDescription('Show useful account and server information for a user.')
     .addUserOption((option) =>
@@ -91,6 +94,11 @@ export async function runSlashCommand(interaction) {
     return;
   }
 
+  if (interaction.commandName === 'help') {
+    await interaction.reply({ embeds: [buildHelpEmbed(interaction)], ephemeral: true });
+    return;
+  }
+
   if (interaction.commandName === 'userinfo') {
     const selected = interaction.options.getUser('user') || interaction.user;
     const target = await fetchFullUser(interaction.client, selected.id);
@@ -142,15 +150,7 @@ export async function runPrefixCommand(message, prefix) {
   }
 
   if (commandName === 'help') {
-    await message.reply(
-      [
-        '**S.A.I commands**',
-        `\`${prefix}ping\` - Check bot status`,
-        `\`${prefix}userinfo [@user|user_id]\` - Show user information`,
-        `\`${prefix}profile [@user|user_id]\` - Show a user profile`,
-        'Slash commands: `/ping`, `/userinfo`, `/profile`, `/setup`, `/ticket`, `/mod`, `/poll`, `/afk`, `/rank`',
-      ].join('\n'),
-    );
+    await message.reply({ embeds: [buildHelpEmbed({ member: message.member, guild: message.guild })] });
     return true;
   }
 
@@ -171,6 +171,30 @@ export async function runPrefixCommand(message, prefix) {
   }
 
   return false;
+}
+
+function buildHelpEmbed(context) {
+  const canModerate = context.member?.permissions?.has?.(PermissionFlagsBits.ModerateMembers);
+  const isAdmin = context.member?.permissions?.has?.(PermissionFlagsBits.Administrator);
+  const fields = [
+    { name: 'General', value: '`/ping` `/help` `/userinfo` `/profile` `/poll` `/afk`' },
+    { name: 'Voice & Community', value: '`/ticket close` `/confess` `/rank` `/leaderboard`' },
+    { name: 'Utilities', value: '`/coords` plus installed personal utility commands' },
+  ];
+  if (canModerate) fields.push({
+    name: 'Moderation',
+    value: '`/mod warn` `/mod warnings` `/mod unwarn` `/mod timeout` `/mod untimeout` `/mod kick` `/mod ban` `/mod unban` `/mod purge`',
+  });
+  if (isAdmin) fields.push({
+    name: 'Administration',
+    value: '`/setup` `/verification` `/role` `/emoji` `/raid` `/backup` `/analytics` `/admin`',
+  });
+  return new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('S.A.I Help')
+    .setDescription('Commands are grouped by purpose. Restricted commands only appear when you have permission.')
+    .addFields(fields)
+    .setFooter({ text: 'The web dashboard provides advanced moderation, AutoMod, messages, schedules, and logs.' });
 }
 
 async function resolveTargetUser(message, rawTarget) {

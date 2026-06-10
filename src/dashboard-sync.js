@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -9,7 +10,7 @@ import {
 import { config } from './config.js';
 import { getGuildData, updateGuildData } from './storage.js';
 
-const syncIntervalMs = 15_000;
+const syncIntervalMs = 2_000;
 const recentGuildMessages = new Map();
 const recentDirectMessages = [];
 let applicationOwnerIds = [];
@@ -25,6 +26,13 @@ const allowedConfigKeys = new Set([
   'boosterChannelId',
   'confessionChannelId',
   'automodEnabled',
+  'automodInviteLinks',
+  'automodMassMentions',
+  'automodSpam',
+  'automodMaxMentions',
+  'automodBlockedWords',
+  'automodExemptRoleIds',
+  'automodExemptChannelIds',
   'levelingEnabled',
   'economyEnabled',
   'tempTextEnabled',
@@ -105,6 +113,7 @@ async function syncGuild(guild) {
       }
     });
   }
+  await sendDueAnnouncements(guild);
 
   const acknowledgedActionIds = [];
   for (const action of desired.actions || []) {
@@ -146,6 +155,7 @@ async function buildSnapshot(guild) {
         xp: Number(progress.xp || 0),
         level: Number(progress.level || 1),
         coins: Number(progress.coins || 0),
+        voiceSeconds: Number(progress.voiceSeconds || 0),
       };
     })
     .filter(Boolean)
@@ -158,12 +168,32 @@ async function buildSnapshot(guild) {
     iconUrl: guild.iconURL({ size: 128 }),
     memberCount: members.size || guild.memberCount,
     latency: Math.max(0, Math.round(guild.client.ws.ping)),
-    version: '1.1.0',
+    version: '1.2.0',
     applicationOwnerIds,
     config: guildData.config,
     recentMessages: recentGuildMessages.get(guild.id) || [],
     recentDms: recentDirectMessages,
     leaderboard,
+    moderationCases: (guildData.moderationCases || []).slice(0, 200),
+    autoresponders: Object.values(guildData.autoresponders || {}),
+    scheduledAnnouncements: Object.values(guildData.scheduledAnnouncements || {}),
+    webhookTemplates: Object.values(guildData.webhookTemplates || {}),
+    members: [...members.values()]
+      .filter((member) => !member.user.bot)
+      .map((member) => ({
+        id: member.id,
+        username: member.user.username,
+        displayName: member.displayName,
+        avatarUrl: member.displayAvatarURL({ size: 64 }),
+        joinedAt: member.joinedAt?.toISOString() || null,
+        createdAt: member.user.createdAt.toISOString(),
+        roleIds: [...member.roles.cache.keys()].filter((id) => id !== guild.id),
+        timedOutUntil: member.communicationDisabledUntil?.toISOString() || null,
+        manageable: member.manageable,
+        kickable: member.kickable,
+        bannable: member.bannable,
+      }))
+      .slice(0, 1000),
     channels: guild.channels.cache
       .filter((channel) => [
         ChannelType.GuildText,
@@ -196,6 +226,12 @@ async function processAction(guild, action) {
   if (action.type === 'post-verification') return postVerification(guild);
   if (action.type === 'send-message') return sendMessage(guild, action.payload);
   if (action.type === 'send-embed') return sendEmbed(guild, action.payload);
+  if (action.type === 'send-webhook') return sendWebhook(guild, action.payload);
+  if (action.type === 'moderate-member') return moderateMember(guild, action);
+  if (action.type === 'save-autoresponder') return saveAutoresponder(guild, action.payload);
+  if (action.type === 'delete-autoresponder') return deleteAutoresponder(guild, action.payload);
+  if (action.type === 'schedule-announcement') return scheduleAnnouncement(guild, action.payload);
+  if (action.type === 'delete-scheduled-announcement') return deleteScheduledAnnouncement(guild, action.payload);
   throw new Error(`Unsupported dashboard action: ${action.type}`);
 }
 
@@ -268,6 +304,127 @@ async function sendEmbed(guild, payload = {}) {
   if (validFields.length) embed.addFields(validFields);
 
   await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
+}
+
+async function sendWebhook(guild, payload = {}) {
+  const channel = await getWritableChannel(guild, String(payload.channelId || ''), Boolean(payload.title || payload.description));
+  const permissions = channel.permissionsFor(guild.members.me);
+  if (!permissions?.has(PermissionFlagsBits.ManageWebhooks)) {
+    throw new Error('S.A.I needs Manage Webhooks in the selected channel.');
+  }
+  const hooks = await channel.fetchWebhooks();
+  let hook = hooks.find((item) => item.owner?.id === guild.client.user.id && item.name === 'S.A.I Dashboard');
+  hook ||= await channel.createWebhook({ name: 'S.A.I Dashboard', reason: 'S.A.I dashboard message delivery.' });
+  const embeds = [];
+  if (payload.title || payload.description) {
+    const embed = new EmbedBuilder().setColor(normalizeColor(payload.color));
+    if (payload.title) embed.setTitle(String(payload.title).slice(0, 256));
+    if (payload.description) embed.setDescription(String(payload.description).slice(0, 4096));
+    embeds.push(embed);
+  }
+  await hook.send({
+    content: String(payload.content || '').slice(0, 2000) || undefined,
+    username: String(payload.username || 'S.A.I').slice(0, 80),
+    avatarURL: isHttpUrl(payload.avatarUrl) ? payload.avatarUrl : undefined,
+    embeds,
+    allowedMentions: { parse: [] },
+  });
+}
+
+async function moderateMember(guild, action) {
+  const payload = action.payload || {};
+  const type = String(payload.action || '');
+  const reason = String(payload.reason || 'Dashboard moderation action.').slice(0, 512);
+  const userId = String(payload.userId || '');
+  const member = await guild.members.fetch(userId).catch(() => null);
+  if (!['ban', 'unban'].includes(type) && !member) throw new Error('Member is not in this server.');
+  if (type === 'warn') {
+    await updateGuildData(guild.id, (guildData) => {
+      const item = addDashboardCase(guildData, type, userId, action.requestedBy, reason);
+      guildData.warnings[userId] ||= [];
+      guildData.warnings[userId].push({ caseNumber: item.caseNumber, reason, moderatorId: action.requestedBy, at: Date.now() });
+    });
+  } else if (type === 'timeout') {
+    await member.timeout(Math.min(Math.max(Number(payload.minutes || 10), 1), 40320) * 60_000, reason);
+    await recordDashboardCase(guild.id, type, userId, action.requestedBy, reason);
+  } else if (type === 'untimeout') {
+    await member.timeout(null, reason);
+    await recordDashboardCase(guild.id, type, userId, action.requestedBy, reason);
+  } else if (type === 'kick') {
+    await member.kick(reason);
+    await recordDashboardCase(guild.id, type, userId, action.requestedBy, reason);
+  } else if (type === 'ban') {
+    await guild.members.ban(userId, { reason });
+    await recordDashboardCase(guild.id, type, userId, action.requestedBy, reason);
+  } else if (type === 'unban') {
+    await guild.members.unban(userId, reason);
+    await recordDashboardCase(guild.id, type, userId, action.requestedBy, reason);
+  } else if (type === 'nickname') {
+    await member.setNickname(String(payload.nickname || '').slice(0, 32) || null, reason);
+    await recordDashboardCase(guild.id, type, userId, action.requestedBy, reason);
+  } else if (type === 'add-role' || type === 'remove-role') {
+    const role = await guild.roles.fetch(String(payload.roleId || '')).catch(() => null);
+    if (!role || role.position >= guild.members.me.roles.highest.position) throw new Error('S.A.I cannot manage that role.');
+    await member.roles[type === 'add-role' ? 'add' : 'remove'](role, reason);
+    await recordDashboardCase(guild.id, type, userId, action.requestedBy, reason);
+  } else {
+    throw new Error('Unsupported moderation action.');
+  }
+}
+
+async function recordDashboardCase(guildId, type, userId, moderatorId, reason) {
+  await updateGuildData(guildId, (guildData) => addDashboardCase(guildData, type, userId, moderatorId, reason));
+}
+
+function addDashboardCase(guildData, type, userId, moderatorId, reason) {
+  const item = { id: crypto.randomUUID(), caseNumber: guildData.nextCaseNumber++, type, userId, moderatorId, reason, at: Date.now() };
+  guildData.moderationCases.unshift(item);
+  guildData.moderationCases.splice(500);
+  return item;
+}
+
+async function saveAutoresponder(guild, payload = {}) {
+  const id = String(payload.id || crypto.randomUUID());
+  await updateGuildData(guild.id, (guildData) => {
+    guildData.autoresponders[id] = {
+      id,
+      trigger: String(payload.trigger || '').trim().slice(0, 100),
+      response: String(payload.response || '').trim().slice(0, 2000),
+      enabled: payload.enabled !== false,
+    };
+  });
+}
+
+async function deleteAutoresponder(guild, payload = {}) {
+  await updateGuildData(guild.id, (guildData) => { delete guildData.autoresponders[String(payload.id || '')]; });
+}
+
+async function scheduleAnnouncement(guild, payload = {}) {
+  const id = String(payload.id || crypto.randomUUID());
+  await updateGuildData(guild.id, (guildData) => {
+    guildData.scheduledAnnouncements[id] = {
+      id,
+      channelId: String(payload.channelId || ''),
+      content: String(payload.content || '').slice(0, 2000),
+      sendAt: Number(payload.sendAt),
+    };
+  });
+}
+
+async function deleteScheduledAnnouncement(guild, payload = {}) {
+  await updateGuildData(guild.id, (guildData) => { delete guildData.scheduledAnnouncements[String(payload.id || '')]; });
+}
+
+async function sendDueAnnouncements(guild) {
+  const guildData = await getGuildData(guild.id);
+  const due = Object.values(guildData.scheduledAnnouncements || {}).filter((item) => Number(item.sendAt) <= Date.now());
+  for (const item of due) {
+    const channel = await getWritableChannel(guild, item.channelId).catch(() => null);
+    if (channel && item.content) {
+      await channel.send({ content: item.content, allowedMentions: { parse: [] } }).catch(() => {});
+    }
+    await updateGuildData(guild.id, (data) => { delete data.scheduledAnnouncements[item.id]; });
+  }
 }
 
 function normalizeColor(value) {
