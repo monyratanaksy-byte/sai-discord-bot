@@ -146,7 +146,6 @@ async function buildSnapshot(guild) {
         xp: Number(progress.xp || 0),
         level: Number(progress.level || 1),
         coins: Number(progress.coins || 0),
-        voiceSeconds: Number(progress.voiceSeconds || 0),
       };
     })
     .filter(Boolean)
