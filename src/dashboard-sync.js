@@ -10,7 +10,10 @@ import {
 import { config } from './config.js';
 import { getGuildData, updateGuildData } from './storage.js';
 
-const syncIntervalMs = 2_000;
+const syncIntervalMs = 10_000;
+const syncInitialBackoffMs = 15_000;
+const syncMaxBackoffMs = 5 * 60_000;
+const syncStates = new Map();
 const recentGuildMessages = new Map();
 const recentDirectMessages = [];
 let applicationOwnerIds = [];
@@ -50,7 +53,7 @@ export function initDashboardSync(client) {
     console.error('Could not load Discord application owners:', error);
   });
   const run = () => syncAllGuilds(client).catch((error) => {
-    console.error('Dashboard sync failed:', error);
+    console.error('Dashboard sync loop failed:', error);
   });
   run();
   setInterval(run, syncIntervalMs).unref();
@@ -88,8 +91,17 @@ export function recordDashboardMessage(message) {
 }
 
 async function syncAllGuilds(client) {
+  const now = Date.now();
   for (const guild of client.guilds.cache.values()) {
-    await syncGuild(guild);
+    const state = syncStates.get(guild.id);
+    if (state?.nextAttemptAt && state.nextAttemptAt > now) continue;
+
+    try {
+      await syncGuild(guild);
+      handleSyncSuccess(guild.id);
+    } catch (error) {
+      handleSyncFailure(guild.id, error);
+    }
   }
 }
 
@@ -102,7 +114,7 @@ async function syncGuild(guild) {
 
   const desiredResponse = await fetch(endpoint, { headers });
   if (!desiredResponse.ok) {
-    throw new Error(`Dashboard GET ${guild.id} failed with ${desiredResponse.status}.`);
+    throw new Error(`Dashboard GET failed with ${desiredResponse.status}.`);
   }
 
   const desired = await desiredResponse.json();
@@ -132,8 +144,44 @@ async function syncGuild(guild) {
     body: JSON.stringify({ snapshot, acknowledgedActionIds }),
   });
   if (!updateResponse.ok) {
-    throw new Error(`Dashboard PUT ${guild.id} failed with ${updateResponse.status}.`);
+    throw new Error(`Dashboard PUT failed with ${updateResponse.status}.`);
   }
+}
+
+function handleSyncSuccess(guildId) {
+  const state = syncStates.get(guildId);
+  if (state?.failures) {
+    console.log(`Dashboard sync recovered for guild ${guildId}.`);
+  }
+  syncStates.delete(guildId);
+}
+
+function handleSyncFailure(guildId, error) {
+  const now = Date.now();
+  const state = syncStates.get(guildId) || { failures: 0, lastLoggedAt: 0, lastError: '' };
+  state.failures += 1;
+
+  const backoffMs = Math.min(
+    syncMaxBackoffMs,
+    syncInitialBackoffMs * 2 ** Math.min(state.failures - 1, 5),
+  );
+  state.nextAttemptAt = now + backoffMs;
+
+  const message = error?.message || String(error);
+  const shouldLog =
+    state.failures === 1 ||
+    state.lastError !== message ||
+    now - state.lastLoggedAt > 60_000;
+
+  if (shouldLog) {
+    console.warn(
+      `Dashboard sync unavailable for guild ${guildId}: ${message} Retrying in ${Math.round(backoffMs / 1000)}s.`,
+    );
+    state.lastLoggedAt = now;
+    state.lastError = message;
+  }
+
+  syncStates.set(guildId, state);
 }
 
 async function buildSnapshot(guild) {
