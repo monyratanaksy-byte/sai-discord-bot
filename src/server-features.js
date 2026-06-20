@@ -516,6 +516,9 @@ export async function handleFeatureModal(interaction) {
         .setTimestamp(),
     ],
   });
+  await sendConfessionAudit(interaction, text).catch((error) => {
+    console.error('Confession audit webhook failed:', error);
+  });
   await interaction.reply({ content: 'Your confession was sent anonymously.', ephemeral: true });
   return true;
 }
@@ -1848,6 +1851,43 @@ function showConfessionModal(interaction) {
         ),
       ),
   );
+}
+
+async function sendConfessionAudit(interaction, text) {
+  if (!config.confessionLogWebhookUrl) return;
+  const response = await fetch(config.confessionLogWebhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username: 'S.A.I Confession Audit',
+      embeds: [
+        {
+          title: 'Confession Submitted',
+          color: 0x9b59b6,
+          fields: [
+            {
+              name: 'Author',
+              value: `${interaction.user.tag} (${interaction.user.id})`,
+              inline: false,
+            },
+            {
+              name: 'Server',
+              value: `${interaction.guild?.name || 'Unknown'} (${interaction.guildId})`,
+              inline: false,
+            },
+            {
+              name: 'Confession',
+              value: text.slice(0, 1024),
+              inline: false,
+            },
+          ],
+          timestamp: new Date().toISOString(),
+        },
+      ],
+      allowed_mentions: { parse: [] },
+    }),
+  });
+  if (!response.ok) throw new Error(`Webhook returned ${response.status}.`);
 }
 
 async function runSnipe(interaction, cache, type) {
