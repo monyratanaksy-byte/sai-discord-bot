@@ -15,6 +15,7 @@ import { config } from './config.js';
 import { getGuildData, updateGuildData } from './storage.js';
 
 const voiceJoinTimes = new Map();
+const voiceRewardIntervalMs = 5 * 60_000;
 const deletedMessages = new Map();
 const editedMessages = new Map();
 const reminderTimers = new Map();
@@ -260,6 +261,38 @@ export const featureCommands = [
     .setName('leaderboard')
     .setDescription('Show the server XP leaderboard.'),
   new SlashCommandBuilder()
+    .setName('economy')
+    .setDescription('Admin XP and coin controls.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((sub) =>
+      sub
+        .setName('add-xp')
+        .setDescription('Add XP to a member.')
+        .addUserOption((option) => option.setName('user').setDescription('User.').setRequired(true))
+        .addIntegerOption((option) => option.setName('amount').setDescription('XP amount.').setRequired(true)),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('add-coins')
+        .setDescription('Add coins to a member.')
+        .addUserOption((option) => option.setName('user').setDescription('User.').setRequired(true))
+        .addIntegerOption((option) => option.setName('amount').setDescription('Coin amount.').setRequired(true)),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('set-xp')
+        .setDescription('Set a member XP total.')
+        .addUserOption((option) => option.setName('user').setDescription('User.').setRequired(true))
+        .addIntegerOption((option) => option.setName('amount').setDescription('XP amount.').setRequired(true)),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('set-coins')
+        .setDescription('Set a member coin total.')
+        .addUserOption((option) => option.setName('user').setDescription('User.').setRequired(true))
+        .addIntegerOption((option) => option.setName('amount').setDescription('Coin amount.').setRequired(true)),
+    ),
+  new SlashCommandBuilder()
     .setName('analytics')
     .setDescription('Show join, leave, message, and voice analytics.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
@@ -299,6 +332,12 @@ export const featureCommands = [
         .setDescription('Add a purchasable role.')
         .addRoleOption((option) => option.setName('role').setDescription('Role.').setRequired(true))
         .addIntegerOption((option) => option.setName('price').setDescription('Coin price.').setRequired(true)),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('remove-role')
+        .setDescription('Remove a role from the shop.')
+        .addRoleOption((option) => option.setName('role').setDescription('Role.').setRequired(true)),
     ),
   new SlashCommandBuilder()
     .setName('emoji')
@@ -391,6 +430,8 @@ export async function initFeatures(client) {
   await Promise.all(client.guilds.cache.map((guild) => refreshInviteCache(guild)));
   await Promise.all(client.guilds.cache.map((guild) => updateStatsChannels(guild)));
   await Promise.all(client.guilds.cache.map((guild) => scheduleGuildReminders(client, guild.id)));
+  seedActiveVoiceMembers(client);
+  setInterval(() => rewardActiveVoiceMembers(client), voiceRewardIntervalMs).unref();
 }
 
 export async function runFeatureSlashCommand(interaction) {
@@ -401,6 +442,7 @@ export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'afk') return runAfk(interaction);
   if (interaction.commandName === 'rank') return runRank(interaction);
   if (interaction.commandName === 'leaderboard') return runLeaderboard(interaction);
+  if (interaction.commandName === 'economy') return runEconomy(interaction);
   if (interaction.commandName === 'analytics') return runAnalytics(interaction);
   if (interaction.commandName === 'invites') return runInvites(interaction);
   if (interaction.commandName === 'confess') return showConfessionModal(interaction);
@@ -1085,6 +1127,23 @@ async function runLeaderboard(interaction) {
   return true;
 }
 
+async function runEconomy(interaction) {
+  const sub = interaction.options.getSubcommand();
+  const user = interaction.options.getUser('user', true);
+  const amount = interaction.options.getInteger('amount', true);
+  if (amount < 0 || amount > 1_000_000) {
+    await interaction.reply({ content: 'Amount must be between 0 and 1,000,000.', ephemeral: true });
+    return true;
+  }
+
+  const result = await adjustMemberProgress(interaction.guildId, user.id, sub, amount);
+  await interaction.reply({
+    content: `${user} now has level ${result.level}, ${result.xp} XP, and ${result.coins} coins.`,
+    ephemeral: true,
+  });
+  return true;
+}
+
 async function runAnalytics(interaction) {
   const guildData = await getGuildData(interaction.guildId);
   await interaction.reply({
@@ -1174,14 +1233,26 @@ async function runShop(interaction) {
   const sub = interaction.options.getSubcommand();
   const guildData = await getGuildData(interaction.guildId);
 
-  if (sub === 'add-role') {
+  if (sub === 'add-role' || sub === 'remove-role') {
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
       await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
       return true;
     }
 
     const role = interaction.options.getRole('role', true);
+    if (sub === 'remove-role') {
+      await updateGuildData(interaction.guildId, (data) => {
+        delete data.shops[role.id];
+      });
+      await interaction.reply({ content: `${role} removed from the shop.`, ephemeral: true });
+      return true;
+    }
+
     const price = interaction.options.getInteger('price', true);
+    if (price < 1 || price > 1_000_000) {
+      await interaction.reply({ content: 'Price must be between 1 and 1,000,000 coins.', ephemeral: true });
+      return true;
+    }
     await updateGuildData(interaction.guildId, (data) => {
       data.shops[role.id] = { roleId: role.id, price };
     });
@@ -1655,6 +1726,34 @@ async function recordVoiceTime(guild, userId, now) {
   });
 }
 
+function seedActiveVoiceMembers(client) {
+  const now = Date.now();
+  for (const guild of client.guilds.cache.values()) {
+    for (const channel of guild.channels.cache.values()) {
+      if (!channel?.isVoiceBased?.()) continue;
+      for (const member of channel.members.values()) {
+        if (!member.user.bot) voiceJoinTimes.set(`${guild.id}:${member.id}`, now);
+      }
+    }
+  }
+}
+
+async function rewardActiveVoiceMembers(client) {
+  const now = Date.now();
+  for (const guild of client.guilds.cache.values()) {
+    for (const channel of guild.channels.cache.values()) {
+      if (!channel?.isVoiceBased?.()) continue;
+      for (const member of channel.members.values()) {
+        if (member.user.bot) continue;
+        const key = `${guild.id}:${member.id}`;
+        if (!voiceJoinTimes.has(key)) voiceJoinTimes.set(key, now);
+        await recordVoiceTime(guild, member.id, now);
+        voiceJoinTimes.set(key, now);
+      }
+    }
+  }
+}
+
 async function refreshInviteCache(guild) {
   const invites = await guild.invites.fetch().catch(() => null);
   if (!invites) return;
@@ -1934,16 +2033,37 @@ function denyConnect(roleId) {
 
 function addUserProgress(guildData, userId, xp, coins) {
   const progress = getUserProgress(guildData, userId);
-  progress.xp += xp;
-  progress.coins += coins;
-  progress.level = Math.floor(Math.sqrt(progress.xp / 100)) + 1;
+  progress.xp = Math.max(0, progress.xp + xp);
+  progress.coins = Math.max(0, progress.coins + coins);
+  updateProgressLevel(progress);
+}
+
+async function adjustMemberProgress(guildId, userId, action, amount) {
+  let result;
+  await updateGuildData(guildId, (guildData) => {
+    const progress = getUserProgress(guildData, userId);
+    if (action === 'add-xp') progress.xp += amount;
+    if (action === 'add-coins') progress.coins += amount;
+    if (action === 'set-xp') progress.xp = amount;
+    if (action === 'set-coins') progress.coins = amount;
+    progress.xp = Math.max(0, progress.xp);
+    progress.coins = Math.max(0, progress.coins);
+    updateProgressLevel(progress);
+    result = { ...progress };
+  });
+  return result;
 }
 
 function getUserProgress(guildData, userId) {
   guildData.levels[userId] ||= { xp: 0, level: 1, coins: 0, voiceSeconds: 0 };
   guildData.levels[userId].coins ||= 0;
   guildData.levels[userId].voiceSeconds ||= 0;
+  updateProgressLevel(guildData.levels[userId]);
   return guildData.levels[userId];
+}
+
+function updateProgressLevel(progress) {
+  progress.level = Math.floor(Math.sqrt(Math.max(0, progress.xp) / 100)) + 1;
 }
 
 function shouldAutoMod(content) {

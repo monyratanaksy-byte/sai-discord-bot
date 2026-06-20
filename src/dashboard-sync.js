@@ -226,9 +226,11 @@ async function buildSnapshot(guild) {
     autoresponders: Object.values(guildData.autoresponders || {}),
     scheduledAnnouncements: Object.values(guildData.scheduledAnnouncements || {}),
     webhookTemplates: Object.values(guildData.webhookTemplates || {}),
+    shopItems: Object.values(guildData.shops || {}),
     members: [...members.values()]
       .filter((member) => !member.user.bot)
       .map((member) => ({
+        ...memberProgress(guildData, member.id),
         id: member.id,
         username: member.user.username,
         displayName: member.displayName,
@@ -280,7 +282,21 @@ async function processAction(guild, action) {
   if (action.type === 'delete-autoresponder') return deleteAutoresponder(guild, action.payload);
   if (action.type === 'schedule-announcement') return scheduleAnnouncement(guild, action.payload);
   if (action.type === 'delete-scheduled-announcement') return deleteScheduledAnnouncement(guild, action.payload);
+  if (action.type === 'adjust-progress') return adjustProgress(guild, action.payload);
+  if (action.type === 'save-shop-item') return saveShopItem(guild, action.payload);
+  if (action.type === 'delete-shop-item') return deleteShopItem(guild, action.payload);
   throw new Error(`Unsupported dashboard action: ${action.type}`);
+}
+
+function memberProgress(guildData, userId) {
+  const progress = guildData.levels?.[userId] || {};
+  const xp = Math.max(0, Number(progress.xp || 0));
+  return {
+    xp,
+    coins: Math.max(0, Number(progress.coins || 0)),
+    level: Math.floor(Math.sqrt(xp / 100)) + 1,
+    voiceSeconds: Math.max(0, Number(progress.voiceSeconds || 0)),
+  };
 }
 
 async function refreshApplicationOwners(client) {
@@ -461,6 +477,47 @@ async function scheduleAnnouncement(guild, payload = {}) {
 
 async function deleteScheduledAnnouncement(guild, payload = {}) {
   await updateGuildData(guild.id, (guildData) => { delete guildData.scheduledAnnouncements[String(payload.id || '')]; });
+}
+
+async function adjustProgress(guild, payload = {}) {
+  const userId = String(payload.userId || '');
+  const field = String(payload.field || '');
+  const mode = String(payload.mode || '');
+  const amount = Math.min(Math.max(Number(payload.amount || 0), 0), 1_000_000);
+  if (!/^\d{10,25}$/.test(userId) || !['xp', 'coins'].includes(field) || !['add', 'set'].includes(mode)) {
+    throw new Error('Invalid XP or coin adjustment.');
+  }
+
+  await updateGuildData(guild.id, (guildData) => {
+    const progress = getProgress(guildData, userId);
+    progress[field] = mode === 'add' ? progress[field] + amount : amount;
+    progress[field] = Math.max(0, progress[field]);
+    progress.level = Math.floor(Math.sqrt(Math.max(0, progress.xp) / 100)) + 1;
+  });
+}
+
+async function saveShopItem(guild, payload = {}) {
+  const roleId = String(payload.roleId || '');
+  const price = Math.min(Math.max(Number(payload.price || 0), 1), 1_000_000);
+  const role = await guild.roles.fetch(roleId).catch(() => null);
+  if (!role) throw new Error('Role no longer exists.');
+  await updateGuildData(guild.id, (guildData) => {
+    guildData.shops[role.id] = { roleId: role.id, price };
+  });
+}
+
+async function deleteShopItem(guild, payload = {}) {
+  await updateGuildData(guild.id, (guildData) => {
+    delete guildData.shops[String(payload.roleId || '')];
+  });
+}
+
+function getProgress(guildData, userId) {
+  guildData.levels[userId] ||= { xp: 0, level: 1, coins: 0, voiceSeconds: 0 };
+  guildData.levels[userId].xp = Math.max(0, Number(guildData.levels[userId].xp || 0));
+  guildData.levels[userId].coins = Math.max(0, Number(guildData.levels[userId].coins || 0));
+  guildData.levels[userId].voiceSeconds = Math.max(0, Number(guildData.levels[userId].voiceSeconds || 0));
+  return guildData.levels[userId];
 }
 
 async function sendDueAnnouncements(guild) {
