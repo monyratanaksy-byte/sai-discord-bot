@@ -1,8 +1,12 @@
 import {
+  ActionRowBuilder,
   ApplicationCommandOptionType,
+  ButtonBuilder,
+  ButtonStyle,
   EmbedBuilder,
   PermissionFlagsBits,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
 } from 'discord.js';
 import { featureCommands, runFeatureSlashCommand } from './server-features.js';
 
@@ -102,6 +106,15 @@ export const commandMentionDescriptions = slashCommands.map((command) => ({
   })),
 }));
 
+const helpCategories = [
+  ['general', 'General', 'Core commands and profile tools.', ['ping', 'help', 'userinfo', 'profile', 'poll', 'afk']],
+  ['community', 'Community', 'Tickets, confessions, and server interaction.', ['ticket', 'confess', 'snipe', 'editsnipe']],
+  ['economy', 'Economy', 'Levels, coins, shop, and rewards.', ['rank', 'balance', 'daily', 'givecoins', 'rate', 'leaderboard', 'shop', 'economy']],
+  ['moderation', 'Moderation', 'Staff moderation tools.', ['mod']],
+  ['admin', 'Admin', 'Setup, dashboard-connected systems, and server controls.', ['setup', 'verification', 'role', 'emoji', 'raid', 'backup', 'analytics', 'invites', 'bot', 'admin']],
+  ['utilities', 'Utilities', 'Useful tools and calculators.', ['coords']],
+];
+
 export async function runSlashCommand(interaction) {
   if (interaction.commandName === 'ping') {
     await interaction.reply({ content: 'S.A.I is online.', ephemeral: true });
@@ -109,7 +122,7 @@ export async function runSlashCommand(interaction) {
   }
 
   if (interaction.commandName === 'help') {
-    await interaction.reply({ embeds: [buildHelpEmbed(interaction, interaction.options.getString('category'))], ephemeral: true });
+    await interaction.reply({ ...buildHelpPayload(interaction, interaction.options.getString('category') || 'general', 0), ephemeral: true });
     return;
   }
 
@@ -187,57 +200,115 @@ export async function runPrefixCommand(message, prefix) {
   return false;
 }
 
-function buildHelpEmbed(context, selectedCategory = null) {
+export async function handleHelpComponent(interaction) {
+  if (!interaction.customId.startsWith('help:')) return false;
+  const [, action, rawCategory = 'general', rawPage = '0'] = interaction.customId.split(':');
+  const currentIndex = Math.max(0, helpCategories.findIndex(([key]) => key === rawCategory));
+  let category = rawCategory;
+  let page = Number(rawPage) || 0;
+
+  if (interaction.isStringSelectMenu()) {
+    category = interaction.values[0] || 'general';
+    page = 0;
+  } else if (action === 'next') {
+    category = helpCategories[(currentIndex + 1) % helpCategories.length][0];
+    page = 0;
+  } else if (action === 'prev') {
+    category = helpCategories[(currentIndex - 1 + helpCategories.length) % helpCategories.length][0];
+    page = 0;
+  }
+
+  await interaction.update(buildHelpPayload(interaction, category, page));
+  return true;
+}
+
+function buildHelpPayload(context, selectedCategory = 'general', page = 0) {
+  return {
+    embeds: [buildHelpEmbed(context, selectedCategory, page)],
+    components: helpComponents(selectedCategory, page),
+  };
+}
+
+function buildHelpEmbed(context, selectedCategory = 'general', page = 0) {
   const canModerate = context.member?.permissions?.has?.(PermissionFlagsBits.ModerateMembers);
   const isAdmin = context.member?.permissions?.has?.(PermissionFlagsBits.Administrator);
-  const categories = [
-    ['general', 'General', ['ping', 'help', 'userinfo', 'profile', 'poll', 'afk']],
-    ['community', 'Voice & Community', ['ticket', 'confess', 'snipe', 'editsnipe']],
-    ['economy', 'Economy & Levels', ['rank', 'balance', 'daily', 'givecoins', 'leaderboard', 'shop', 'economy']],
-    ['moderation', canModerate ? 'Moderation' : 'Moderation · locked', ['mod']],
-    ['admin', isAdmin ? 'Setup & Admin' : 'Setup & Admin · locked', ['setup', 'verification', 'role', 'emoji', 'raid', 'backup', 'analytics', 'invites', 'bot', 'admin']],
-    ['utilities', 'Utilities', ['coords']],
-  ];
-  const fields = categories
-    .filter(([key]) => !selectedCategory || selectedCategory === key)
-    .flatMap(([, name, commandNames]) => formatHelpFields(name, commandNames))
-    .filter((field) => field.value);
+  const category = helpCategories.find(([key]) => key === selectedCategory) || helpCategories[0];
+  const [key, name, summary, commandNames] = category;
+  const locked =
+    (key === 'moderation' && !canModerate) ||
+    (key === 'admin' && !isAdmin);
+  const rows = formatHelpRows(commandNames);
+  const pages = chunkRows(rows, 8);
+  const pageIndex = Math.min(Math.max(page, 0), Math.max(pages.length - 1, 0));
+  const visibleRows = pages[pageIndex] || [];
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle(selectedCategory ? 'Command Category' : 'All Server Commands')
+    .setTitle(`${name}${locked ? ' · locked' : ''}`)
     .setDescription([
-      'Use `/help category:` to focus one section.',
-      'Commands marked locked require staff/admin permissions.',
-      'Booster rewards: server boosters receive `1.5x` XP and coins.',
+      summary,
+      '',
+      visibleRows.join('\n') || 'No commands in this section.',
     ].join('\n'))
-    .addFields(fields)
-    .setFooter({ text: 'Dashboard: moderation, AutoMod, messages, schedules, member XP/coins, and shop management.' });
+    .addFields(
+      { name: 'Navigation', value: 'Use the menu below to switch sections. Use Next/Previous to browse quickly.' },
+      { name: 'Booster Rewards', value: 'Server boosters receive `1.5x` XP and coins from messages, voice, and daily rewards.' },
+    )
+    .setFooter({ text: `Page ${pageIndex + 1}/${Math.max(pages.length, 1)} · Dashboard handles advanced setup and logs.` });
   const botIcon = context.client?.user?.displayAvatarURL?.({ size: 128 });
   embed.setAuthor(botIcon ? { name: 'S.A.I Command Center', iconURL: botIcon } : { name: 'S.A.I Command Center' });
   return embed;
 }
 
-function formatHelpFields(name, commandNames) {
+function helpComponents(selectedCategory, page) {
+  return [
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`help:select:${selectedCategory}:${page}`)
+        .setPlaceholder('Choose a help section')
+        .addOptions(helpCategories.map(([value, label, description]) => ({
+          label,
+          value,
+          description,
+          default: value === selectedCategory,
+        }))),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`help:prev:${selectedCategory}:${page}`)
+        .setLabel('Previous')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`help:next:${selectedCategory}:${page}`)
+        .setLabel('Next')
+        .setStyle(ButtonStyle.Primary),
+    ),
+  ];
+}
+
+function formatHelpRows(commandNames) {
   const rows = [];
-  for (const name of commandNames) {
-    const command = slashCommands.find((item) => item.name === name);
+  for (const commandName of commandNames) {
+    const command = slashCommands.find((item) => item.name === commandName);
     if (!command) continue;
     rows.push(...formatCommandRows(command));
   }
-  const fields = [];
+  return rows;
+}
+
+function chunkRows(rows, maxRows) {
+  const chunks = [];
   let current = [];
   for (const row of rows) {
-    const next = [...current, row].join('\n');
-    if (next.length > 1000 && current.length) {
-      fields.push({ name: fields.length ? `${name} continued` : name, value: current.join('\n') });
+    if (current.length >= maxRows) {
+      chunks.push(current);
       current = [row];
     } else {
       current.push(row);
     }
   }
-  if (current.length) fields.push({ name: fields.length ? `${name} continued` : name, value: current.join('\n') });
-  return fields;
+  if (current.length) chunks.push(current);
+  return chunks;
 }
 
 function formatCommandRows(command) {

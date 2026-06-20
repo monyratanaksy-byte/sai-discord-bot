@@ -53,7 +53,7 @@ if [ -f /home/container/package.json ]; then /usr/local/bin/npm install; fi; /us
 
 Expected healthy console output:
 S.A.I is online as S.A.I#2790
-Registered 29 slash commands for guild 1481641949651013765.
+Registered 30 slash commands for guild 1481641949651013765.
 
 Main setup commands:
 /setup template
@@ -73,6 +73,7 @@ Main setup commands:
 /balance
 /daily
 /givecoins
+/rate
 /shop view
 /shop add-role
 /shop remove-role

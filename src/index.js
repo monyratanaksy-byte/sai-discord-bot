@@ -7,7 +7,7 @@ import {
   Routes,
 } from 'discord.js';
 import { config, requireConfig } from './config.js';
-import { runPrefixCommand, runSlashCommand, slashCommands } from './commands.js';
+import { handleHelpComponent, runPrefixCommand, runSlashCommand, slashCommands } from './commands.js';
 import {
   handleFeatureButton,
   handleFeatureGuildMemberAdd,
@@ -130,6 +130,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isMessageContextMenuCommand()) {
       await runMessageContextCommand(interaction);
+      return;
+    }
+
+    if ((interaction.isButton() || interaction.isStringSelectMenu()) && interaction.customId.startsWith('help:')) {
+      await handleHelpComponent(interaction);
       return;
     }
 

@@ -273,6 +273,9 @@ export const featureCommands = [
     .addUserOption((option) => option.setName('user').setDescription('User.').setRequired(true))
     .addIntegerOption((option) => option.setName('amount').setDescription('Coins to give.').setRequired(true)),
   new SlashCommandBuilder()
+    .setName('rate')
+    .setDescription('Show how fast you earn XP and coins.'),
+  new SlashCommandBuilder()
     .setName('leaderboard')
     .setDescription('Show the server XP leaderboard.'),
   new SlashCommandBuilder()
@@ -459,6 +462,7 @@ export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'balance') return runBalance(interaction);
   if (interaction.commandName === 'daily') return runDaily(interaction);
   if (interaction.commandName === 'givecoins') return runGiveCoins(interaction);
+  if (interaction.commandName === 'rate') return runRate(interaction);
   if (interaction.commandName === 'leaderboard') return runLeaderboard(interaction);
   if (interaction.commandName === 'economy') return runEconomy(interaction);
   if (interaction.commandName === 'analytics') return runAnalytics(interaction);
@@ -519,6 +523,7 @@ export async function handleFeatureModal(interaction) {
 export async function handleFeatureMessageCreate(message) {
   if (!message.guild || message.author.bot) return;
   const guildData = await getGuildData(message.guild.id);
+  let levelUpNotice = null;
   guildData.analytics.messages += 1;
 
   if (await handleAdminSayCommand(message)) {
@@ -582,10 +587,16 @@ export async function handleFeatureMessageCreate(message) {
   }
 
   if (guildData.config.levelingEnabled) {
-    addUserProgress(guildData, message.author.id, 8, guildData.config.economyEnabled ? 2 : 0, rewardMultiplierForMember(message.member));
+    const result = addUserProgress(guildData, message.author.id, 8, guildData.config.economyEnabled ? 2 : 0, rewardMultiplierForMember(message.member));
+    if (result.leveledUp) {
+      levelUpNotice = { userId: message.author.id, level: result.level };
+    }
   }
 
   await updateGuildData(message.guild.id, () => {});
+  if (levelUpNotice) {
+    await sendLevelUpMessage(message.guild, message.author.id, levelUpNotice.level, message.channel).catch(() => {});
+  }
 }
 
 export async function handleFeatureMessageDelete(message) {
@@ -1231,6 +1242,32 @@ async function runGiveCoins(interaction) {
   return true;
 }
 
+async function runRate(interaction) {
+  const multiplier = rewardMultiplierForMember(interaction.member);
+  const messageXp = applyRewardMultiplier(8, multiplier);
+  const messageCoins = applyRewardMultiplier(2, multiplier);
+  const voiceXpPerMinute = applyRewardMultiplier(2, multiplier);
+  const voiceCoinsPerTenMinutes = applyRewardMultiplier(5, multiplier);
+  const dailyCoins = applyRewardMultiplier(dailyRewardCoins, multiplier);
+
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle('Your earning rate')
+        .setDescription(multiplier > 1 ? 'Booster bonus active: `1.5x` XP and coins.' : 'Boost the server to earn `1.5x` XP and coins.')
+        .addFields(
+          { name: 'Messages', value: `+${messageXp} XP and +${messageCoins} coins per message`, inline: false },
+          { name: 'Voice chat', value: `About +${voiceXpPerMinute} XP per minute and +${voiceCoinsPerTenMinutes} coins per 10 minutes`, inline: false },
+          { name: 'Daily', value: `+${dailyCoins} coins every 24 hours with /daily`, inline: false },
+          { name: 'Level formula', value: 'Level increases from total XP, so higher levels take more activity.', inline: false },
+        ),
+    ],
+    ephemeral: true,
+  });
+  return true;
+}
+
 async function runLeaderboard(interaction) {
   const guildData = await getGuildData(interaction.guildId);
   const rows = Object.entries(guildData.levels)
@@ -1843,21 +1880,28 @@ async function recordVoiceTime(guild, userId, now) {
   if (seconds < 30) return;
   const member = await guild.members.fetch(userId).catch(() => null);
   const multiplier = rewardMultiplierForMember(member);
+  let levelUpNotice = null;
 
   await updateGuildData(guild.id, (guildData) => {
     guildData.analytics.voiceSeconds += seconds;
     const progress = getUserProgress(guildData, userId);
     progress.voiceSeconds += seconds;
     if (guildData.config.voiceRewardsEnabled) {
-      addUserProgress(
+      const result = addUserProgress(
         guildData,
         userId,
         Math.floor(seconds / 30),
         guildData.config.economyEnabled ? Math.floor(seconds / 120) : 0,
         multiplier,
       );
+      if (result.leveledUp) {
+        levelUpNotice = { userId, level: result.level };
+      }
     }
   });
+  if (levelUpNotice) {
+    await sendLevelUpMessage(guild, userId, levelUpNotice.level).catch(() => {});
+  }
 }
 
 function seedActiveVoiceMembers(client) {
@@ -1886,6 +1930,35 @@ async function rewardActiveVoiceMembers(client) {
       }
     }
   }
+}
+
+async function sendLevelUpMessage(guild, userId, level, preferredChannel = null) {
+  const channel = preferredChannel?.isTextBased?.()
+    ? preferredChannel
+    : await getPublicTextChannel(guild);
+  if (!channel) return;
+  await channel.send({
+    content: `<@${userId}> leveled up to **Level ${level}**.`,
+    allowedMentions: { users: [userId] },
+  });
+}
+
+async function getPublicTextChannel(guild) {
+  const candidates = [
+    guild.systemChannel,
+    ...guild.channels.cache
+      .filter((channel) => channel.type === ChannelType.GuildText)
+      .sort((a, b) => a.rawPosition - b.rawPosition)
+      .values(),
+  ].filter(Boolean);
+
+  for (const channel of candidates) {
+    const permissions = channel.permissionsFor(guild.members.me);
+    if (permissions?.has(PermissionFlagsBits.ViewChannel) && permissions.has(PermissionFlagsBits.SendMessages)) {
+      return channel;
+    }
+  }
+  return null;
 }
 
 async function refreshInviteCache(guild) {
@@ -2167,9 +2240,11 @@ function denyConnect(roleId) {
 
 function addUserProgress(guildData, userId, xp, coins, multiplier = 1) {
   const progress = getUserProgress(guildData, userId);
+  const previousLevel = progress.level;
   progress.xp = Math.max(0, progress.xp + applyRewardMultiplier(xp, multiplier));
   progress.coins = Math.max(0, progress.coins + applyRewardMultiplier(coins, multiplier));
   updateProgressLevel(progress);
+  return { leveledUp: progress.level > previousLevel, level: progress.level };
 }
 
 function applyRewardMultiplier(amount, multiplier = 1) {
