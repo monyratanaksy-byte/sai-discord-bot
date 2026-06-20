@@ -508,6 +508,7 @@ export async function handleFeatureModal(interaction) {
         .setColor(0x9b59b6)
         .setTitle('Anonymous Confession')
         .setDescription(text)
+        .setFooter({ text: 'Want to add a confession? Use /confess' })
         .setTimestamp(),
     ],
   });
