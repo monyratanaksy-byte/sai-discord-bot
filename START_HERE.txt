@@ -27,10 +27,10 @@ Persistent server data:
 Do not delete the data folder unless you want to reset saved setup, panels, XP, tickets, coins, invites, warnings, and config.
 
 S.A.I web dashboard:
-https://sai-discord-dashboard.netlify.app
+https://sai-discord-control.netlify.app
 
 Dashboard bot connection values required on Katabump:
-DASHBOARD_API_URL=https://sai-discord-dashboard.netlify.app
+DASHBOARD_API_URL=https://sai-discord-control.netlify.app
 DASHBOARD_BOT_SECRET=the-same-secret-configured-on-netlify
 DASHBOARD_FAST_SYNC=false
 
