@@ -107,12 +107,12 @@ export const commandMentionDescriptions = slashCommands.map((command) => ({
 }));
 
 const helpCategories = [
-  ['general', 'General', 'Core commands and profile tools.', ['ping', 'help', 'userinfo', 'profile', 'poll', 'afk']],
-  ['community', 'Community', 'Tickets, confessions, and server interaction.', ['ticket', 'confess', 'snipe', 'editsnipe']],
-  ['economy', 'Economy', 'Levels, coins, shop, and rewards.', ['rank', 'balance', 'daily', 'givecoins', 'rate', 'leaderboard', 'shop', 'economy']],
-  ['moderation', 'Moderation', 'Staff moderation tools.', ['mod']],
-  ['admin', 'Admin', 'Setup, dashboard-connected systems, and server controls.', ['setup', 'verification', 'role', 'emoji', 'raid', 'backup', 'analytics', 'invites', 'bot', 'admin']],
-  ['utilities', 'Utilities', 'Useful tools and calculators.', ['coords']],
+  ['general', 'General', 'Core commands and profile tools.', '🏠', ['ping', 'help', 'userinfo', 'profile', 'poll', 'afk']],
+  ['community', 'Community', 'Tickets, confessions, and server interaction.', '💬', ['ticket', 'confess', 'snipe', 'editsnipe']],
+  ['economy', 'Economy', 'Levels, coins, shop, and rewards.', '🪙', ['rank', 'balance', 'daily', 'givecoins', 'rate', 'leaderboard', 'shop', 'economy']],
+  ['moderation', 'Moderation', 'Staff moderation tools.', '🛡️', ['mod']],
+  ['admin', 'Admin', 'Setup, dashboard-connected systems, and server controls.', '⚙️', ['setup', 'verification', 'role', 'emoji', 'raid', 'backup', 'analytics', 'invites', 'bot', 'admin']],
+  ['utilities', 'Utilities', 'Useful tools and calculators.', '🧭', ['coords']],
 ];
 
 export async function runSlashCommand(interaction) {
@@ -233,7 +233,7 @@ function buildHelpEmbed(context, selectedCategory = 'general', page = 0) {
   const canModerate = context.member?.permissions?.has?.(PermissionFlagsBits.ModerateMembers);
   const isAdmin = context.member?.permissions?.has?.(PermissionFlagsBits.Administrator);
   const category = helpCategories.find(([key]) => key === selectedCategory) || helpCategories[0];
-  const [key, name, summary, commandNames] = category;
+  const [key, name, summary, emoji, commandNames] = category;
   const locked =
     (key === 'moderation' && !canModerate) ||
     (key === 'admin' && !isAdmin);
@@ -244,7 +244,7 @@ function buildHelpEmbed(context, selectedCategory = 'general', page = 0) {
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle(`${name}${locked ? ' · locked' : ''}`)
+    .setTitle(`${emoji} ${name}${locked ? ' · locked' : ''}`)
     .setDescription([
       summary,
       '',
@@ -254,7 +254,7 @@ function buildHelpEmbed(context, selectedCategory = 'general', page = 0) {
       { name: 'Navigation', value: 'Use the menu below to switch sections. Use Next/Previous to browse quickly.' },
       { name: 'Booster Rewards', value: 'Server boosters receive `1.5x` XP and coins from messages, voice, and daily rewards.' },
     )
-    .setFooter({ text: `Page ${pageIndex + 1}/${Math.max(pages.length, 1)} · Dashboard handles advanced setup and logs.` });
+    .setFooter({ text: `${emoji} Page ${pageIndex + 1}/${Math.max(pages.length, 1)} · Dashboard handles advanced setup and logs.` });
   const botIcon = context.client?.user?.displayAvatarURL?.({ size: 128 });
   embed.setAuthor(botIcon ? { name: 'S.A.I Command Center', iconURL: botIcon } : { name: 'S.A.I Command Center' });
   return embed;
@@ -265,11 +265,12 @@ function helpComponents(selectedCategory, page) {
     new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId(`help:select:${selectedCategory}:${page}`)
-        .setPlaceholder('Choose a help section')
-        .addOptions(helpCategories.map(([value, label, description]) => ({
+        .setPlaceholder('Pick a section')
+        .addOptions(helpCategories.map(([value, label, description, emoji]) => ({
           label,
           value,
           description,
+          emoji,
           default: value === selectedCategory,
         }))),
     ),
@@ -277,10 +278,12 @@ function helpComponents(selectedCategory, page) {
       new ButtonBuilder()
         .setCustomId(`help:prev:${selectedCategory}:${page}`)
         .setLabel('Previous')
+        .setEmoji('⬅️')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`help:next:${selectedCategory}:${page}`)
         .setLabel('Next')
+        .setEmoji('➡️')
         .setStyle(ButtonStyle.Primary),
     ),
   ];
@@ -314,9 +317,9 @@ function chunkRows(rows, maxRows) {
 function formatCommandRows(command) {
   const subcommands = command.options?.filter((option) => option.type === 1) || [];
   if (!subcommands.length) {
-    return [`\`/${command.name}\` - ${command.description}`];
+    return [`• \`/${command.name}\` - ${command.description}`];
   }
-  return subcommands.map((subcommand) => `\`/${command.name} ${subcommand.name}\` - ${subcommand.description}`);
+  return subcommands.map((subcommand) => `• \`/${command.name} ${subcommand.name}\` - ${subcommand.description}`);
 }
 
 async function resolveTargetUser(message, rawTarget) {
