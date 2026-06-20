@@ -17,6 +17,7 @@ import { getGuildData, updateGuildData } from './storage.js';
 const voiceJoinTimes = new Map();
 const voiceRewardIntervalMs = 5 * 60_000;
 const boosterRewardMultiplier = 1.5;
+const voiceCompanionRewardMultiplier = 1.5;
 const dailyRewardCoins = 150;
 const dailyRewardCooldownMs = 24 * 60 * 60 * 1000;
 const deletedMessages = new Map();
@@ -1251,6 +1252,9 @@ async function runRate(interaction) {
   const messageCoins = applyRewardMultiplier(2, multiplier);
   const voiceXpPerMinute = applyRewardMultiplier(2, multiplier);
   const voiceCoinsPerTenMinutes = applyRewardMultiplier(5, multiplier);
+  const groupVoiceMultiplier = multiplier * voiceCompanionRewardMultiplier;
+  const groupVoiceXpPerMinute = applyRewardMultiplier(2, groupVoiceMultiplier);
+  const groupVoiceCoinsPerTenMinutes = applyRewardMultiplier(5, groupVoiceMultiplier);
   const dailyCoins = applyRewardMultiplier(dailyRewardCoins, multiplier);
 
   await interaction.reply({
@@ -1261,7 +1265,8 @@ async function runRate(interaction) {
         .setDescription(multiplier > 1 ? 'Booster bonus active: `1.5x` XP and coins.' : 'Boost the server to earn `1.5x` XP and coins.')
         .addFields(
           { name: 'Messages', value: `+${messageXp} XP and +${messageCoins} coins per message`, inline: false },
-          { name: 'Voice chat', value: `About +${voiceXpPerMinute} XP per minute and +${voiceCoinsPerTenMinutes} coins per 10 minutes`, inline: false },
+          { name: 'Voice chat solo', value: `About +${voiceXpPerMinute} XP per minute and +${voiceCoinsPerTenMinutes} coins per 10 minutes`, inline: false },
+          { name: 'Voice chat with people', value: `About +${groupVoiceXpPerMinute} XP per minute and +${groupVoiceCoinsPerTenMinutes} coins per 10 minutes`, inline: false },
           { name: 'Daily', value: `+${dailyCoins} coins every 24 hours with /daily`, inline: false },
           { name: 'Level formula', value: 'Level increases from total XP, so higher levels take more activity.', inline: false },
         ),
@@ -1919,7 +1924,7 @@ async function recordVoiceTime(guild, userId, now) {
   const seconds = Math.max(0, Math.floor((now - joinedAt) / 1000));
   if (seconds < 30) return;
   const member = await guild.members.fetch(userId).catch(() => null);
-  const multiplier = rewardMultiplierForMember(member);
+  const multiplier = rewardMultiplierForMember(member) * voiceCompanionMultiplierForMember(member);
   let levelUpNotice = null;
 
   await updateGuildData(guild.id, (guildData) => {
@@ -2294,6 +2299,12 @@ function applyRewardMultiplier(amount, multiplier = 1) {
 
 function rewardMultiplierForMember(member) {
   return member?.premiumSince || member?.premiumSinceTimestamp ? boosterRewardMultiplier : 1;
+}
+
+function voiceCompanionMultiplierForMember(member) {
+  if (!member?.voice?.channel) return 1;
+  const nonBotCount = member.voice.channel.members.filter((channelMember) => !channelMember.user.bot).size;
+  return nonBotCount >= 2 ? voiceCompanionRewardMultiplier : 1;
 }
 
 async function adjustMemberProgress(guildId, userId, action, amount) {
