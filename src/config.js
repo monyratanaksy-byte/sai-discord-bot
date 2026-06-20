@@ -8,6 +8,7 @@ export const config = {
   prefix: process.env.PREFIX || 's!',
   dashboardApiUrl: process.env.DASHBOARD_API_URL,
   dashboardBotSecret: process.env.DASHBOARD_BOT_SECRET,
+  dashboardFastSync: ['1', 'true', 'yes', 'on'].includes(String(process.env.DASHBOARD_FAST_SYNC || '').toLowerCase()),
 };
 
 export function requireConfig(keys) {

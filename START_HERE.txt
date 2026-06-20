@@ -32,9 +32,15 @@ https://sai-discord-dashboard.netlify.app
 Dashboard bot connection values required on Katabump:
 DASHBOARD_API_URL=https://sai-discord-dashboard.netlify.app
 DASHBOARD_BOT_SECRET=the-same-secret-configured-on-netlify
+DASHBOARD_FAST_SYNC=false
 
 The dashboard uses Discord OAuth and only lists servers where the signed-in
-user has Administrator permission. S.A.I polls the dashboard every 15 seconds.
+user has Administrator permission. S.A.I uses optimized dashboard sync by
+default: it checks for dashboard actions every 60 seconds and only uploads a
+new snapshot when something changed or when you request a bot sync in the
+dashboard. To temporarily make dashboard actions near-live while you are doing
+setup work, set DASHBOARD_FAST_SYNC=true on Katabump and restart the bot. Turn
+it back to false after setup to reduce Netlify usage.
 Never put the Discord bot token in the dashboard frontend.
 
 GitHub update:

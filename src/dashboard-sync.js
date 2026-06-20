@@ -10,10 +10,11 @@ import {
 import { config } from './config.js';
 import { getGuildData, updateGuildData } from './storage.js';
 
-const syncIntervalMs = 10_000;
+const syncIntervalMs = config.dashboardFastSync ? 2_000 : 60_000;
 const syncInitialBackoffMs = 15_000;
 const syncMaxBackoffMs = 5 * 60_000;
 const syncStates = new Map();
+const snapshotHashes = new Map();
 const recentGuildMessages = new Map();
 const recentDirectMessages = [];
 let applicationOwnerIds = [];
@@ -57,7 +58,7 @@ export function initDashboardSync(client) {
   });
   run();
   setInterval(run, syncIntervalMs).unref();
-  console.log('S.A.I dashboard sync enabled.');
+  console.log(`S.A.I dashboard sync enabled (${config.dashboardFastSync ? 'fast 2s' : 'optimized 60s'} mode).`);
 }
 
 export function recordDashboardMessage(message) {
@@ -128,6 +129,7 @@ async function syncGuild(guild) {
   await sendDueAnnouncements(guild);
 
   const acknowledgedActionIds = [];
+  const forceSnapshot = (desired.actions || []).some((action) => action.type === 'refresh-snapshot');
   for (const action of desired.actions || []) {
     try {
       await processAction(guild, action);
@@ -138,6 +140,11 @@ async function syncGuild(guild) {
   }
 
   const snapshot = await buildSnapshot(guild);
+  const snapshotHash = hashSnapshot(snapshot);
+  if (!acknowledgedActionIds.length && !forceSnapshot && snapshotHashes.get(guild.id) === snapshotHash) {
+    return;
+  }
+
   const updateResponse = await fetch(endpoint, {
     method: 'PUT',
     headers,
@@ -146,6 +153,7 @@ async function syncGuild(guild) {
   if (!updateResponse.ok) {
     throw new Error(`Dashboard PUT failed with ${updateResponse.status}.`);
   }
+  snapshotHashes.set(guild.id, snapshotHash);
 }
 
 function handleSyncSuccess(guildId) {
@@ -182,6 +190,11 @@ function handleSyncFailure(guildId, error) {
   }
 
   syncStates.set(guildId, state);
+}
+
+function hashSnapshot(snapshot) {
+  const stableSnapshot = { ...snapshot, latency: 0 };
+  return crypto.createHash('sha256').update(JSON.stringify(stableSnapshot)).digest('hex');
 }
 
 async function buildSnapshot(guild) {
