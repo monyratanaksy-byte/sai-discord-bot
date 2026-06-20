@@ -16,6 +16,9 @@ import { getGuildData, updateGuildData } from './storage.js';
 
 const voiceJoinTimes = new Map();
 const voiceRewardIntervalMs = 5 * 60_000;
+const boosterRewardMultiplier = 1.5;
+const dailyRewardCoins = 150;
+const dailyRewardCooldownMs = 24 * 60 * 60 * 1000;
 const deletedMessages = new Map();
 const editedMessages = new Map();
 const reminderTimers = new Map();
@@ -258,6 +261,18 @@ export const featureCommands = [
     .setDescription('Show your level and coins.')
     .addUserOption((option) => option.setName('user').setDescription('User.').setRequired(false)),
   new SlashCommandBuilder()
+    .setName('balance')
+    .setDescription('Show your coin balance.')
+    .addUserOption((option) => option.setName('user').setDescription('User.').setRequired(false)),
+  new SlashCommandBuilder()
+    .setName('daily')
+    .setDescription('Claim your daily coin reward.'),
+  new SlashCommandBuilder()
+    .setName('givecoins')
+    .setDescription('Give coins to another member.')
+    .addUserOption((option) => option.setName('user').setDescription('User.').setRequired(true))
+    .addIntegerOption((option) => option.setName('amount').setDescription('Coins to give.').setRequired(true)),
+  new SlashCommandBuilder()
     .setName('leaderboard')
     .setDescription('Show the server XP leaderboard.'),
   new SlashCommandBuilder()
@@ -441,6 +456,9 @@ export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'poll') return runPoll(interaction);
   if (interaction.commandName === 'afk') return runAfk(interaction);
   if (interaction.commandName === 'rank') return runRank(interaction);
+  if (interaction.commandName === 'balance') return runBalance(interaction);
+  if (interaction.commandName === 'daily') return runDaily(interaction);
+  if (interaction.commandName === 'givecoins') return runGiveCoins(interaction);
   if (interaction.commandName === 'leaderboard') return runLeaderboard(interaction);
   if (interaction.commandName === 'economy') return runEconomy(interaction);
   if (interaction.commandName === 'analytics') return runAnalytics(interaction);
@@ -563,7 +581,7 @@ export async function handleFeatureMessageCreate(message) {
   }
 
   if (guildData.config.levelingEnabled) {
-    addUserProgress(guildData, message.author.id, 8, guildData.config.economyEnabled ? 2 : 0);
+    addUserProgress(guildData, message.author.id, 8, guildData.config.economyEnabled ? 2 : 0, rewardMultiplierForMember(message.member));
   }
 
   await updateGuildData(message.guild.id, () => {});
@@ -1100,6 +1118,8 @@ async function runRank(interaction) {
   const user = interaction.options.getUser('user') || interaction.user;
   const guildData = await getGuildData(interaction.guildId);
   const progress = getUserProgress(guildData, user.id);
+  const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+  const multiplier = rewardMultiplierForMember(member);
   await interaction.reply({
     embeds: [
       new EmbedBuilder()
@@ -1109,8 +1129,103 @@ async function runRank(interaction) {
           { name: 'Level', value: String(progress.level), inline: true },
           { name: 'XP', value: String(progress.xp), inline: true },
           { name: 'Coins', value: String(progress.coins), inline: true },
+          {
+            name: 'Booster Bonus',
+            value: multiplier > 1 ? `${multiplier}x XP and coins active` : 'Not active',
+            inline: true,
+          },
         ),
     ],
+  });
+  return true;
+}
+
+async function runBalance(interaction) {
+  const user = interaction.options.getUser('user') || interaction.user;
+  const guildData = await getGuildData(interaction.guildId);
+  const progress = getUserProgress(guildData, user.id);
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setTitle(`${user.username}'s wallet`)
+        .addFields(
+          { name: 'Coins', value: String(progress.coins), inline: true },
+          { name: 'Level', value: String(progress.level), inline: true },
+          { name: 'XP', value: String(progress.xp), inline: true },
+        ),
+    ],
+    ephemeral: true,
+  });
+  return true;
+}
+
+async function runDaily(interaction) {
+  let result;
+  await updateGuildData(interaction.guildId, (guildData) => {
+    guildData.economy.dailyClaims ||= {};
+    const lastClaim = Number(guildData.economy.dailyClaims[interaction.user.id] || 0);
+    const now = Date.now();
+    if (now - lastClaim < dailyRewardCooldownMs) {
+      result = { available: false, nextAt: lastClaim + dailyRewardCooldownMs };
+      return;
+    }
+
+    const reward = applyRewardMultiplier(dailyRewardCoins, rewardMultiplierForMember(interaction.member));
+    const progress = getUserProgress(guildData, interaction.user.id);
+    progress.coins += reward;
+    guildData.economy.dailyClaims[interaction.user.id] = now;
+    result = { available: true, reward, coins: progress.coins };
+  });
+
+  if (!result.available) {
+    await interaction.reply({
+      content: `You already claimed your daily. Try again <t:${Math.floor(result.nextAt / 1000)}:R>.`,
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  await interaction.reply({
+    content: `Daily claimed: +${result.reward} coins. Your balance is now ${result.coins} coins.`,
+    ephemeral: true,
+  });
+  return true;
+}
+
+async function runGiveCoins(interaction) {
+  const target = interaction.options.getUser('user', true);
+  const amount = interaction.options.getInteger('amount', true);
+  if (target.bot || target.id === interaction.user.id) {
+    await interaction.reply({ content: 'Choose another non-bot member.', ephemeral: true });
+    return true;
+  }
+  if (amount < 1 || amount > 1_000_000) {
+    await interaction.reply({ content: 'Amount must be between 1 and 1,000,000 coins.', ephemeral: true });
+    return true;
+  }
+
+  let result;
+  await updateGuildData(interaction.guildId, (guildData) => {
+    const giver = getUserProgress(guildData, interaction.user.id);
+    const receiver = getUserProgress(guildData, target.id);
+    if (giver.coins < amount) {
+      result = { ok: false, balance: giver.coins };
+      return;
+    }
+    giver.coins -= amount;
+    receiver.coins += amount;
+    result = { ok: true, balance: giver.coins, receiverCoins: receiver.coins };
+  });
+
+  if (!result.ok) {
+    await interaction.reply({ content: `You only have ${result.balance} coins.`, ephemeral: true });
+    return true;
+  }
+
+  await interaction.reply({
+    content: `Sent ${amount} coins to ${target}. Your balance is now ${result.balance} coins.`,
+    ephemeral: true,
   });
   return true;
 }
@@ -1663,7 +1778,17 @@ async function buyShopRole(interaction, roleId) {
   }
   progress.coins -= item.price;
   await interaction.member.roles.add(roleId, 'S.A.I shop purchase.');
-  await updateGuildData(interaction.guildId, () => {});
+  await updateGuildData(interaction.guildId, (data) => {
+    data.economy.shopPurchases ||= [];
+    data.economy.shopPurchases.unshift({
+      id: crypto.randomUUID(),
+      userId: interaction.user.id,
+      roleId,
+      price: item.price,
+      at: Date.now(),
+    });
+    data.economy.shopPurchases.splice(200);
+  });
   await interaction.reply({ content: `Purchased <@&${roleId}>.`, ephemeral: true });
   return true;
 }
@@ -1715,13 +1840,21 @@ async function recordVoiceTime(guild, userId, now) {
 
   const seconds = Math.max(0, Math.floor((now - joinedAt) / 1000));
   if (seconds < 30) return;
+  const member = await guild.members.fetch(userId).catch(() => null);
+  const multiplier = rewardMultiplierForMember(member);
 
   await updateGuildData(guild.id, (guildData) => {
     guildData.analytics.voiceSeconds += seconds;
     const progress = getUserProgress(guildData, userId);
     progress.voiceSeconds += seconds;
     if (guildData.config.voiceRewardsEnabled) {
-      addUserProgress(guildData, userId, Math.floor(seconds / 30), guildData.config.economyEnabled ? Math.floor(seconds / 120) : 0);
+      addUserProgress(
+        guildData,
+        userId,
+        Math.floor(seconds / 30),
+        guildData.config.economyEnabled ? Math.floor(seconds / 120) : 0,
+        multiplier,
+      );
     }
   });
 }
@@ -2031,11 +2164,20 @@ function denyConnect(roleId) {
   };
 }
 
-function addUserProgress(guildData, userId, xp, coins) {
+function addUserProgress(guildData, userId, xp, coins, multiplier = 1) {
   const progress = getUserProgress(guildData, userId);
-  progress.xp = Math.max(0, progress.xp + xp);
-  progress.coins = Math.max(0, progress.coins + coins);
+  progress.xp = Math.max(0, progress.xp + applyRewardMultiplier(xp, multiplier));
+  progress.coins = Math.max(0, progress.coins + applyRewardMultiplier(coins, multiplier));
   updateProgressLevel(progress);
+}
+
+function applyRewardMultiplier(amount, multiplier = 1) {
+  if (!amount) return 0;
+  return Math.max(1, Math.floor(amount * multiplier));
+}
+
+function rewardMultiplierForMember(member) {
+  return member?.premiumSince || member?.premiumSinceTimestamp ? boosterRewardMultiplier : 1;
 }
 
 async function adjustMemberProgress(guildId, userId, action, amount) {

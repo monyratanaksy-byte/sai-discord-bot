@@ -12,7 +12,21 @@ export const slashCommands = [
     .setDescription('Check whether S.A.I is online.'),
   new SlashCommandBuilder()
     .setName('help')
-    .setDescription('Show S.A.I commands and what you can use.'),
+    .setDescription('Show S.A.I commands and what you can use.')
+    .addStringOption((option) =>
+      option
+        .setName('category')
+        .setDescription('Show one command category.')
+        .setRequired(false)
+        .addChoices(
+          { name: 'General', value: 'general' },
+          { name: 'Voice & Community', value: 'community' },
+          { name: 'Economy & Levels', value: 'economy' },
+          { name: 'Moderation', value: 'moderation' },
+          { name: 'Setup & Admin', value: 'admin' },
+          { name: 'Utilities', value: 'utilities' },
+        ),
+    ),
   new SlashCommandBuilder()
     .setName('userinfo')
     .setDescription('Show useful account and server information for a user.')
@@ -95,7 +109,7 @@ export async function runSlashCommand(interaction) {
   }
 
   if (interaction.commandName === 'help') {
-    await interaction.reply({ embeds: [buildHelpEmbed(interaction)], ephemeral: true });
+    await interaction.reply({ embeds: [buildHelpEmbed(interaction, interaction.options.getString('category'))], ephemeral: true });
     return;
   }
 
@@ -173,28 +187,65 @@ export async function runPrefixCommand(message, prefix) {
   return false;
 }
 
-function buildHelpEmbed(context) {
+function buildHelpEmbed(context, selectedCategory = null) {
   const canModerate = context.member?.permissions?.has?.(PermissionFlagsBits.ModerateMembers);
   const isAdmin = context.member?.permissions?.has?.(PermissionFlagsBits.Administrator);
-  const fields = [
-    { name: 'General', value: '`/ping` `/help` `/userinfo` `/profile` `/poll` `/afk`' },
-    { name: 'Voice & Community', value: '`/ticket close` `/confess` `/rank` `/leaderboard`' },
-    { name: 'Utilities', value: '`/coords` plus installed personal utility commands' },
+  const categories = [
+    ['general', 'General', ['ping', 'help', 'userinfo', 'profile', 'poll', 'afk']],
+    ['community', 'Voice & Community', ['ticket', 'confess', 'snipe', 'editsnipe']],
+    ['economy', 'Economy & Levels', ['rank', 'balance', 'daily', 'givecoins', 'leaderboard', 'shop', 'economy']],
+    ['moderation', canModerate ? 'Moderation' : 'Moderation · locked', ['mod']],
+    ['admin', isAdmin ? 'Setup & Admin' : 'Setup & Admin · locked', ['setup', 'verification', 'role', 'emoji', 'raid', 'backup', 'analytics', 'invites', 'bot', 'admin']],
+    ['utilities', 'Utilities', ['coords']],
   ];
-  if (canModerate) fields.push({
-    name: 'Moderation',
-    value: '`/mod warn` `/mod warnings` `/mod unwarn` `/mod timeout` `/mod untimeout` `/mod kick` `/mod ban` `/mod unban` `/mod purge`',
-  });
-  if (isAdmin) fields.push({
-    name: 'Administration',
-    value: '`/setup` `/verification` `/role` `/emoji` `/raid` `/backup` `/analytics` `/admin`',
-  });
-  return new EmbedBuilder()
+  const fields = categories
+    .filter(([key]) => !selectedCategory || selectedCategory === key)
+    .flatMap(([, name, commandNames]) => formatHelpFields(name, commandNames))
+    .filter((field) => field.value);
+
+  const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle('S.A.I Help')
-    .setDescription('Commands are grouped by purpose. Restricted commands only appear when you have permission.')
+    .setTitle(selectedCategory ? 'Command Category' : 'All Server Commands')
+    .setDescription([
+      'Use `/help category:` to focus one section.',
+      'Commands marked locked require staff/admin permissions.',
+      'Booster rewards: server boosters receive `1.5x` XP and coins.',
+    ].join('\n'))
     .addFields(fields)
-    .setFooter({ text: 'The web dashboard provides advanced moderation, AutoMod, messages, schedules, and logs.' });
+    .setFooter({ text: 'Dashboard: moderation, AutoMod, messages, schedules, member XP/coins, and shop management.' });
+  const botIcon = context.client?.user?.displayAvatarURL?.({ size: 128 });
+  embed.setAuthor(botIcon ? { name: 'S.A.I Command Center', iconURL: botIcon } : { name: 'S.A.I Command Center' });
+  return embed;
+}
+
+function formatHelpFields(name, commandNames) {
+  const rows = [];
+  for (const name of commandNames) {
+    const command = slashCommands.find((item) => item.name === name);
+    if (!command) continue;
+    rows.push(...formatCommandRows(command));
+  }
+  const fields = [];
+  let current = [];
+  for (const row of rows) {
+    const next = [...current, row].join('\n');
+    if (next.length > 1000 && current.length) {
+      fields.push({ name: fields.length ? `${name} continued` : name, value: current.join('\n') });
+      current = [row];
+    } else {
+      current.push(row);
+    }
+  }
+  if (current.length) fields.push({ name: fields.length ? `${name} continued` : name, value: current.join('\n') });
+  return fields;
+}
+
+function formatCommandRows(command) {
+  const subcommands = command.options?.filter((option) => option.type === 1) || [];
+  if (!subcommands.length) {
+    return [`\`/${command.name}\` - ${command.description}`];
+  }
+  return subcommands.map((subcommand) => `\`/${command.name} ${subcommand.name}\` - ${subcommand.description}`);
 }
 
 async function resolveTargetUser(message, rawTarget) {
