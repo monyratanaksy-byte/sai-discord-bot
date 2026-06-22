@@ -108,8 +108,8 @@ export const commandMentionDescriptions = slashCommands.map((command) => ({
 
 const helpCategories = [
   ['general', 'General', 'Core commands and profile tools.', '🏠', ['ping', 'help', 'userinfo', 'profile', 'poll', 'afk']],
-  ['community', 'Community', 'Tickets, confessions, and server interaction.', '💬', ['ticket', 'confess', 'snipe', 'editsnipe']],
-  ['economy', 'Economy', 'Levels, coins, shop, and rewards.', '🪙', ['rank', 'balance', 'daily', 'givecoins', 'rate', 'leaderboard', 'shop', 'economy']],
+  ['community', 'Community', 'Tickets, confessions, and server interaction.', '💬', ['ticket', 'confess', 'snipe', 'editsnipe', 'activity']],
+  ['economy', 'Economy', 'Levels, coins, shop, and rewards.', '🪙', ['rank', 'balance', 'daily', 'givecoins', 'rate', 'leaderboard', 'vcleaderboard', 'shop', 'economy']],
   ['moderation', 'Moderation', 'Staff moderation tools.', '🛡️', ['mod']],
   ['admin', 'Admin', 'Setup, dashboard-connected systems, and server controls.', '⚙️', ['setup', 'verification', 'role', 'emoji', 'raid', 'backup', 'analytics', 'invites', 'bot', 'admin']],
   ['utilities', 'Utilities', 'Useful tools and calculators.', '🧭', ['coords']],

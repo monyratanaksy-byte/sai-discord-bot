@@ -15,11 +15,14 @@ import { config } from './config.js';
 import { getGuildData, updateGuildData } from './storage.js';
 
 const voiceJoinTimes = new Map();
+const voiceSessionStats = new Map();
 const voiceRewardIntervalMs = 5 * 60_000;
 const boosterRewardMultiplier = 1.5;
 const voiceCompanionRewardMultiplier = 1.5;
 const dailyRewardCoins = 150;
 const dailyRewardCooldownMs = 24 * 60 * 60 * 1000;
+const rankPassCooldownMs = 6 * 60 * 60 * 1000;
+const voiceMilestoneHours = [1, 5, 10, 25, 50, 100, 250, 500, 1000];
 const deletedMessages = new Map();
 const editedMessages = new Map();
 const reminderTimers = new Map();
@@ -277,6 +280,39 @@ export const featureCommands = [
     .setName('rate')
     .setDescription('Show how fast you earn XP and coins.'),
   new SlashCommandBuilder()
+    .setName('activity')
+    .setDescription('Configure public activity announcements.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((sub) =>
+      sub
+        .setName('setup')
+        .setDescription('Set the channel for level-ups, milestones, and leaderboards.')
+        .addChannelOption((option) =>
+          option
+            .setName('channel')
+            .setDescription('Activity feed channel.')
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(true),
+        ),
+    ),
+  new SlashCommandBuilder()
+    .setName('vcleaderboard')
+    .setDescription('Show the voice activity leaderboard.')
+    .addStringOption((option) =>
+      option
+        .setName('period')
+        .setDescription('Leaderboard period.')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Daily', value: 'daily' },
+          { name: 'Weekly', value: 'weekly' },
+          { name: 'All time', value: 'alltime' },
+        ),
+    )
+    .addBooleanOption((option) =>
+      option.setName('public').setDescription('Post publicly instead of private.').setRequired(false),
+    ),
+  new SlashCommandBuilder()
     .setName('leaderboard')
     .setDescription('Show the server XP leaderboard.'),
   new SlashCommandBuilder()
@@ -464,6 +500,8 @@ export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'daily') return runDaily(interaction);
   if (interaction.commandName === 'givecoins') return runGiveCoins(interaction);
   if (interaction.commandName === 'rate') return runRate(interaction);
+  if (interaction.commandName === 'activity') return runActivity(interaction);
+  if (interaction.commandName === 'vcleaderboard') return runVoiceLeaderboard(interaction);
   if (interaction.commandName === 'leaderboard') return runLeaderboard(interaction);
   if (interaction.commandName === 'economy') return runEconomy(interaction);
   if (interaction.commandName === 'analytics') return runAnalytics(interaction);
@@ -595,11 +633,12 @@ export async function handleFeatureMessageCreate(message) {
     if (result.leveledUp) {
       levelUpNotice = { userId: message.author.id, level: result.level };
     }
+    queueRankPassAnnouncement(message.guild, guildData, message.author.id, result);
   }
 
   await updateGuildData(message.guild.id, () => {});
   if (levelUpNotice) {
-    await sendLevelUpMessage(message.guild, message.author.id, levelUpNotice.level, message.channel).catch(() => {});
+    await sendLevelUpMessage(message.guild, message.author.id, levelUpNotice.level).catch(() => {});
   }
 }
 
@@ -685,17 +724,19 @@ export async function handleFeatureVoiceStateUpdate(oldState, newState) {
 
   if (!oldState.channelId && newState.channelId) {
     voiceJoinTimes.set(oldKey, now);
+    voiceSessionStats.set(oldKey, { startedAt: now, seconds: 0, xp: 0, coins: 0 });
     return;
   }
 
   if (oldState.channelId && !newState.channelId) {
-    await recordVoiceTime(oldState.guild, oldState.id, now);
+    await recordVoiceTime(oldState.guild, oldState.id, now, { final: true, voiceChannel: oldState.channel });
     return;
   }
 
   if (oldState.channelId !== newState.channelId) {
-    await recordVoiceTime(oldState.guild, oldState.id, now);
+    await recordVoiceTime(oldState.guild, oldState.id, now, { voiceChannel: oldState.channel });
     voiceJoinTimes.set(oldKey, now);
+    voiceSessionStats.set(oldKey, voiceSessionStats.get(oldKey) || { startedAt: now, seconds: 0, xp: 0, coins: 0 });
   }
 }
 
@@ -1273,6 +1314,52 @@ async function runRate(interaction) {
     ],
     ephemeral: true,
   });
+  return true;
+}
+
+async function runActivity(interaction) {
+  const channel = interaction.options.getChannel('channel', true);
+  await updateGuildData(interaction.guildId, (guildData) => {
+    guildData.config.activityChannelId = channel.id;
+  });
+  await interaction.reply({
+    content: `Activity announcements will post in ${channel}.`,
+    ephemeral: true,
+  });
+  return true;
+}
+
+async function runVoiceLeaderboard(interaction) {
+  const period = interaction.options.getString('period', true);
+  const isPublic = interaction.options.getBoolean('public') || false;
+  const guildData = await getGuildData(interaction.guildId);
+  resetActivityBuckets(guildData);
+  const rows = voiceLeaderboardRows(guildData, period);
+  const title = {
+    daily: 'Daily Voice Leaderboard',
+    weekly: 'Weekly Voice Leaderboard',
+    alltime: 'All-Time Voice Leaderboard',
+  }[period];
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle(`🎙️ ${title}`)
+    .setDescription(rows.length ? rows.join('\n') : 'No voice activity has been recorded for this period yet.')
+    .setFooter({ text: 'Voice rewards update while members stay connected.' })
+    .setTimestamp();
+
+  if (isPublic) {
+    const channel = await getActivityChannel(interaction.guild);
+    if (!channel && !interaction.channel?.isTextBased()) {
+      await interaction.reply({ content: 'No writable activity channel is configured.', ephemeral: true });
+      return true;
+    }
+    await (channel || interaction.channel).send({ embeds: [embed] });
+    await interaction.reply({ content: `Posted ${title.toLowerCase()}.`, ephemeral: true });
+    return true;
+  }
+
+  await interaction.reply({ embeds: [embed], ephemeral: true });
   return true;
 }
 
@@ -1915,7 +2002,7 @@ async function runSnipe(interaction, cache, type) {
   return true;
 }
 
-async function recordVoiceTime(guild, userId, now) {
+async function recordVoiceTime(guild, userId, now, options = {}) {
   const key = `${guild.id}:${userId}`;
   const joinedAt = voiceJoinTimes.get(key);
   if (!joinedAt) return;
@@ -1924,13 +2011,18 @@ async function recordVoiceTime(guild, userId, now) {
   const seconds = Math.max(0, Math.floor((now - joinedAt) / 1000));
   if (seconds < 30) return;
   const member = await guild.members.fetch(userId).catch(() => null);
-  const multiplier = rewardMultiplierForMember(member) * voiceCompanionMultiplierForMember(member);
+  const multiplier = rewardMultiplierForMember(member) * voiceCompanionMultiplierForMember(member, options.voiceChannel);
   let levelUpNotice = null;
+  let milestoneNotice = null;
+  let earned = { xp: 0, coins: 0 };
 
   await updateGuildData(guild.id, (guildData) => {
+    resetActivityBuckets(guildData);
     guildData.analytics.voiceSeconds += seconds;
     const progress = getUserProgress(guildData, userId);
     progress.voiceSeconds += seconds;
+    addVoiceBucketSeconds(guildData, userId, seconds);
+    milestoneNotice = getNewVoiceMilestone(guildData, userId, progress.voiceSeconds);
     if (guildData.config.voiceRewardsEnabled) {
       const result = addUserProgress(
         guildData,
@@ -1939,13 +2031,27 @@ async function recordVoiceTime(guild, userId, now) {
         guildData.config.economyEnabled ? Math.floor(seconds / 120) : 0,
         multiplier,
       );
+      earned = { xp: result.xpAdded, coins: result.coinsAdded };
       if (result.leveledUp) {
         levelUpNotice = { userId, level: result.level };
       }
+      queueRankPassAnnouncement(guild, guildData, userId, result);
     }
   });
+  const session = voiceSessionStats.get(key) || { startedAt: joinedAt, seconds: 0, xp: 0, coins: 0 };
+  session.seconds += seconds;
+  session.xp += earned.xp;
+  session.coins += earned.coins;
+  voiceSessionStats.set(key, session);
   if (levelUpNotice) {
     await sendLevelUpMessage(guild, userId, levelUpNotice.level).catch(() => {});
+  }
+  if (milestoneNotice) {
+    await sendVoiceMilestoneMessage(guild, userId, milestoneNotice).catch(() => {});
+  }
+  if (options.final) {
+    voiceSessionStats.delete(key);
+    await sendVoiceSessionSummary(member, session).catch(() => {});
   }
 }
 
@@ -1978,14 +2084,49 @@ async function rewardActiveVoiceMembers(client) {
 }
 
 async function sendLevelUpMessage(guild, userId, level, preferredChannel = null) {
-  const channel = preferredChannel?.isTextBased?.()
-    ? preferredChannel
-    : await getPublicTextChannel(guild);
+  const channel = await getActivityChannel(guild) || (preferredChannel?.isTextBased?.() ? preferredChannel : await getPublicTextChannel(guild));
   if (!channel) return;
   await channel.send({
-    content: `<@${userId}> leveled up to **Level ${level}**.`,
+    content: `🆙 <@${userId}> reached **Level ${level}**.`,
     allowedMentions: { users: [userId] },
   });
+}
+
+async function sendVoiceMilestoneMessage(guild, userId, hours) {
+  const channel = await getActivityChannel(guild) || await getPublicTextChannel(guild);
+  if (!channel) return;
+  await channel.send({
+    content: `🎙️ <@${userId}> reached **${hours} hour${hours === 1 ? '' : 's'}** in voice chat.`,
+    allowedMentions: { users: [userId] },
+  });
+}
+
+async function sendRankPassMessage(guild, userId, passedUserId, rank) {
+  const channel = await getActivityChannel(guild);
+  if (!channel) return;
+  await channel.send({
+    content: `📈 <@${userId}> passed <@${passedUserId}> and moved to **#${rank}** on the XP leaderboard.`,
+    allowedMentions: { users: [userId, passedUserId] },
+  });
+}
+
+async function sendVoiceSessionSummary(member, session) {
+  if (!member || !session?.seconds) return;
+  await member.send(
+    `Voice session summary: ${formatDuration(session.seconds)}, +${session.xp} XP, +${session.coins} coins.`,
+  ).catch(() => {});
+}
+
+async function getActivityChannel(guild) {
+  const guildData = await getGuildData(guild.id);
+  const channelId = guildData.config.activityChannelId;
+  if (!channelId) return null;
+  const channel = await guild.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased?.()) return null;
+  const permissions = channel.permissionsFor(guild.members.me);
+  return permissions?.has(PermissionFlagsBits.ViewChannel) && permissions.has(PermissionFlagsBits.SendMessages)
+    ? channel
+    : null;
 }
 
 async function getPublicTextChannel(guild) {
@@ -2004,6 +2145,81 @@ async function getPublicTextChannel(guild) {
     }
   }
   return null;
+}
+
+function resetActivityBuckets(guildData, now = Date.now()) {
+  guildData.activity ||= {};
+  const day = dayKey(now);
+  const week = weekKey(now);
+  if (guildData.activity.currentDay !== day) {
+    guildData.activity.currentDay = day;
+    guildData.activity.voiceDaily = {};
+  }
+  if (guildData.activity.currentWeek !== week) {
+    guildData.activity.currentWeek = week;
+    guildData.activity.voiceWeekly = {};
+  }
+  guildData.activity.voiceDaily ||= {};
+  guildData.activity.voiceWeekly ||= {};
+  guildData.activity.voiceMilestones ||= {};
+  guildData.activity.rankPassCooldowns ||= {};
+}
+
+function addVoiceBucketSeconds(guildData, userId, seconds) {
+  guildData.activity.voiceDaily[userId] = (guildData.activity.voiceDaily[userId] || 0) + seconds;
+  guildData.activity.voiceWeekly[userId] = (guildData.activity.voiceWeekly[userId] || 0) + seconds;
+}
+
+function getNewVoiceMilestone(guildData, userId, totalSeconds) {
+  const totalHours = Math.floor(totalSeconds / 3600);
+  guildData.activity.voiceMilestones[userId] ||= [];
+  const reached = guildData.activity.voiceMilestones[userId];
+  const next = voiceMilestoneHours.find((hours) => totalHours >= hours && !reached.includes(hours));
+  if (!next) return null;
+  reached.push(next);
+  return next;
+}
+
+function voiceLeaderboardRows(guildData, period) {
+  const source = period === 'daily'
+    ? guildData.activity?.voiceDaily || {}
+    : period === 'weekly'
+      ? guildData.activity?.voiceWeekly || {}
+      : Object.fromEntries(Object.entries(guildData.levels || {}).map(([userId, progress]) => [userId, Number(progress.voiceSeconds || 0)]));
+  return Object.entries(source)
+    .sort(([, a], [, b]) => Number(b) - Number(a))
+    .slice(0, 10)
+    .map(([userId, seconds], index) => `${index + 1}. <@${userId}> — ${formatDuration(Number(seconds || 0))}`);
+}
+
+function queueRankPassAnnouncement(guild, guildData, userId, progressResult) {
+  if (!progressResult?.passedUserId) return;
+  resetActivityBuckets(guildData);
+  const key = `${userId}:${progressResult.passedUserId}`;
+  const last = Number(guildData.activity.rankPassCooldowns[key] || 0);
+  if (Date.now() - last < rankPassCooldownMs) return;
+  guildData.activity.rankPassCooldowns[key] = Date.now();
+  setTimeout(() => sendRankPassMessage(guild, userId, progressResult.passedUserId, progressResult.rank).catch(() => {}), 0);
+}
+
+function dayKey(timestamp) {
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function weekKey(timestamp) {
+  const date = new Date(timestamp);
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+function formatDuration(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 async function refreshInviteCache(guild) {
@@ -2286,10 +2502,26 @@ function denyConnect(roleId) {
 function addUserProgress(guildData, userId, xp, coins, multiplier = 1) {
   const progress = getUserProgress(guildData, userId);
   const previousLevel = progress.level;
-  progress.xp = Math.max(0, progress.xp + applyRewardMultiplier(xp, multiplier));
-  progress.coins = Math.max(0, progress.coins + applyRewardMultiplier(coins, multiplier));
+  const previousRanks = xpRanks(guildData);
+  const xpAdded = applyRewardMultiplier(xp, multiplier);
+  const coinsAdded = applyRewardMultiplier(coins, multiplier);
+  progress.xp = Math.max(0, progress.xp + xpAdded);
+  progress.coins = Math.max(0, progress.coins + coinsAdded);
   updateProgressLevel(progress);
-  return { leveledUp: progress.level > previousLevel, level: progress.level };
+  const nextRanks = xpRanks(guildData);
+  const previousRank = previousRanks.indexOf(userId);
+  const nextRank = nextRanks.indexOf(userId);
+  const passedUserId = previousRank > -1 && nextRank > -1 && nextRank < previousRank
+    ? nextRanks[nextRank + 1]
+    : null;
+  return {
+    leveledUp: progress.level > previousLevel,
+    level: progress.level,
+    xpAdded,
+    coinsAdded,
+    passedUserId,
+    rank: nextRank + 1,
+  };
 }
 
 function applyRewardMultiplier(amount, multiplier = 1) {
@@ -2301,9 +2533,15 @@ function rewardMultiplierForMember(member) {
   return member?.premiumSince || member?.premiumSinceTimestamp ? boosterRewardMultiplier : 1;
 }
 
-function voiceCompanionMultiplierForMember(member) {
-  if (!member?.voice?.channel) return 1;
-  const nonBotCount = member.voice.channel.members.filter((channelMember) => !channelMember.user.bot).size;
+function xpRanks(guildData) {
+  return Object.entries(guildData.levels || {})
+    .sort(([, a], [, b]) => Number(b.xp || 0) - Number(a.xp || 0))
+    .map(([rankedUserId]) => rankedUserId);
+}
+
+function voiceCompanionMultiplierForMember(member, channel = member?.voice?.channel) {
+  if (!channel) return 1;
+  const nonBotCount = channel.members.filter((channelMember) => !channelMember.user.bot).size;
   return nonBotCount >= 2 ? voiceCompanionRewardMultiplier : 1;
 }
 

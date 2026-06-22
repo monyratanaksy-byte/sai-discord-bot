@@ -53,7 +53,7 @@ if [ -f /home/container/package.json ]; then /usr/local/bin/npm install; fi; /us
 
 Expected healthy console output:
 S.A.I is online as S.A.I#2790
-Registered 30 slash commands for guild 1481641949651013765.
+Registered 32 slash commands for guild 1481641949651013765.
 
 Main setup commands:
 /setup template
@@ -74,9 +74,23 @@ Main setup commands:
 /daily
 /givecoins
 /rate
+/activity setup
+/vcleaderboard
 /shop view
 /shop add-role
 /shop remove-role
+
+Public activity setup:
+Use /activity setup channel:#community-progress
+
+S.A.I will post public level-up messages, voice milestones, and XP rank pass
+announcements there. Rank pass announcements have a cooldown so the channel does
+not get spammed.
+
+Voice leaderboards:
+Use /vcleaderboard period:daily public:true
+Use /vcleaderboard period:weekly public:true
+Use /vcleaderboard period:alltime public:true
 
 One-command server setup:
 Use /setup template

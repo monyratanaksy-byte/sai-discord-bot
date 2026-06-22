@@ -29,6 +29,7 @@ const allowedConfigKeys = new Set([
   'boosterRoleId',
   'boosterChannelId',
   'confessionChannelId',
+  'activityChannelId',
   'automodEnabled',
   'automodInviteLinks',
   'automodMassMentions',

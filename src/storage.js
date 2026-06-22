@@ -81,6 +81,7 @@ export function createGuildData() {
       boosterRoleId: null,
       boosterChannelId: null,
       confessionChannelId: null,
+      activityChannelId: null,
       automodEnabled: false,
       automodInviteLinks: true,
       automodMassMentions: true,
@@ -117,6 +118,14 @@ export function createGuildData() {
       messages: 0,
       voiceSeconds: 0,
     },
+    activity: {
+      voiceDaily: {},
+      voiceWeekly: {},
+      voiceMilestones: {},
+      rankPassCooldowns: {},
+      currentDay: null,
+      currentWeek: null,
+    },
     shops: {},
     backups: {},
   };
@@ -147,6 +156,10 @@ function mergeDefaults(data) {
       analytics: {
         ...createGuildData().analytics,
         ...(guildData.analytics || {}),
+      },
+      activity: {
+        ...createGuildData().activity,
+        ...(guildData.activity || {}),
       },
     };
   }
