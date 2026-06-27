@@ -28,10 +28,10 @@ rsync -a --delete \
   --exclude 'data/*.json' \
   "$PROJECT_DIR/" "$UPLOAD_DIR/"
 
-if [ -n "$TMP_ENV" ]; then
-  mv "$TMP_ENV" "$UPLOAD_DIR/.env"
-elif [ -f "$PROJECT_DIR/.env" ]; then
+if [ -f "$PROJECT_DIR/.env" ]; then
   cp "$PROJECT_DIR/.env" "$UPLOAD_DIR/.env"
+elif [ -n "$TMP_ENV" ]; then
+  mv "$TMP_ENV" "$UPLOAD_DIR/.env"
 fi
 
 rm -f "$ZIP_PATH"
