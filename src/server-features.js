@@ -654,7 +654,16 @@ export async function handleFeatureMessageDelete(message) {
 }
 
 export async function handleFeatureMessageUpdate(oldMessage, newMessage) {
-  if (!oldMessage.guild || oldMessage.author?.bot || oldMessage.content === newMessage.content) return;
+  if (
+    !oldMessage.guild
+    || !oldMessage.author
+    || oldMessage.author.bot
+    || oldMessage.content === newMessage.content
+    || (!oldMessage.content && !newMessage.content)
+  ) {
+    return;
+  }
+
   editedMessages.set(oldMessage.channel.id, {
     author: oldMessage.author.tag,
     before: oldMessage.content || '[unknown]',
