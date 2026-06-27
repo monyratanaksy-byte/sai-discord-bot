@@ -713,7 +713,7 @@ export async function handleFeatureGuildMemberUpdate(oldMember, newMember) {
   const channel = await newMember.guild.channels
     .fetch(guildData.config.boosterChannelId)
     .catch(() => null);
-  if (channel?.isTextBased()) {
+  if (typeof channel?.isTextBased === 'function' && channel.isTextBased()) {
     await channel.send(`Thanks for boosting, ${newMember}!`).catch(() => {});
   }
 }
