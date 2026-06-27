@@ -12,6 +12,7 @@ export const config = {
   confessionLogWebhookUrl: process.env.CONFESSION_LOG_WEBHOOK_URL,
   verifyRedirectUri: process.env.VERIFY_REDIRECT_URI,
   verifySiteUrl: process.env.VERIFY_SITE_URL,
+  verifyApiSecret: process.env.VERIFY_API_SECRET,
 };
 
 export function requireConfig(keys) {

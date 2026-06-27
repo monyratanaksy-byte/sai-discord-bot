@@ -208,6 +208,26 @@ export const featureCommands = [
     .setDescription('Create a test Discord OAuth verification link.')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder()
+    .setName('senduser')
+    .setDescription('Add one verified S.A.I user to another server.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addUserOption((option) =>
+      option.setName('user').setDescription('Verified user to add.').setRequired(true),
+    )
+    .addStringOption((option) =>
+      option.setName('server_id').setDescription('Target server ID where S.A.I is already installed.').setRequired(true),
+    ),
+  new SlashCommandBuilder()
+    .setName('sendverified')
+    .setDescription('Add verified S.A.I users to another server.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption((option) =>
+      option.setName('server_id').setDescription('Target server ID where S.A.I is already installed.').setRequired(true),
+    )
+    .addIntegerOption((option) =>
+      option.setName('limit').setDescription('Maximum users to try, default 100.').setRequired(false),
+    ),
+  new SlashCommandBuilder()
     .setName('ticket')
     .setDescription('Ticket commands.')
     .addSubcommand((sub) => sub.setName('close').setDescription('Close the current ticket.')),
@@ -500,6 +520,8 @@ export async function initFeatures(client) {
 export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'setup') return runSetup(interaction);
   if (interaction.commandName === 'testverify') return runTestVerify(interaction);
+  if (interaction.commandName === 'senduser') return runSendUser(interaction);
+  if (interaction.commandName === 'sendverified') return runSendVerified(interaction);
   if (interaction.commandName === 'ticket') return runTicket(interaction);
   if (interaction.commandName === 'mod') return runMod(interaction);
   if (interaction.commandName === 'poll') return runPoll(interaction);
@@ -1127,6 +1149,78 @@ async function runTestVerify(interaction) {
     ephemeral: true,
   });
   return true;
+}
+
+async function runSendUser(interaction) {
+  const user = interaction.options.getUser('user', true);
+  const serverId = interaction.options.getString('server_id', true).trim();
+  if (!validateTargetServerId(serverId)) {
+    return interaction.reply({ content: 'That server ID does not look valid.', ephemeral: true });
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  const result = await transferVerifiedUsers(interaction, {
+    mode: 'single',
+    userId: user.id,
+    guildId: serverId,
+  });
+
+  if (!result.ok) {
+    return interaction.editReply(`Could not send ${user.tag}: ${result.error || result.result?.error || 'Unknown error.'}`);
+  }
+
+  return interaction.editReply(`Sent ${user.tag} to server \`${serverId}\`.`);
+}
+
+async function runSendVerified(interaction) {
+  const serverId = interaction.options.getString('server_id', true).trim();
+  const limit = Math.min(Math.max(interaction.options.getInteger('limit') || 100, 1), 500);
+  if (!validateTargetServerId(serverId)) {
+    return interaction.reply({ content: 'That server ID does not look valid.', ephemeral: true });
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  const result = await transferVerifiedUsers(interaction, {
+    mode: 'all',
+    guildId: serverId,
+    limit,
+  });
+
+  if (!result.ok) {
+    return interaction.editReply(`Could not send verified users: ${result.error || 'Unknown error.'}`);
+  }
+
+  return interaction.editReply(
+    `Tried ${result.requested} verified user(s) for server \`${serverId}\`.\nAdded: ${result.added}\nFailed: ${result.failed}`,
+  );
+}
+
+function validateTargetServerId(serverId) {
+  return /^\d{17,20}$/.test(serverId);
+}
+
+async function transferVerifiedUsers(interaction, body) {
+  const verifySiteUrl = config.verifySiteUrl?.replace(/\/+$/, '');
+  if (!verifySiteUrl || !config.verifyApiSecret) {
+    return { ok: false, error: 'VERIFY_SITE_URL and VERIFY_API_SECRET must be set in Katabump .env.' };
+  }
+
+  if (!interaction.client.guilds.cache.has(body.guildId)) {
+    return { ok: false, error: 'S.A.I must already be inside the target server before it can add verified users there.' };
+  }
+
+  const response = await fetch(`${verifySiteUrl}/api/transfer-user`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.verifyApiSecret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  }).catch((error) => ({ ok: false, status: 0, json: async () => ({ ok: false, error: error.message }) }));
+
+  const data = await response.json().catch(() => ({ ok: false, error: `Verify site returned HTTP ${response.status}.` }));
+  if (!response.ok) return { ok: false, ...data };
+  return data;
 }
 
 async function runTicket(interaction) {
