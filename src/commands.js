@@ -9,6 +9,7 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { featureCommands, runFeatureSlashCommand } from './server-features.js';
+import { runVoiceSlashCommand, voiceCommands } from './voice-manager.js';
 
 export const slashCommands = [
   new SlashCommandBuilder()
@@ -94,7 +95,7 @@ export const slashCommands = [
         .setName('config')
         .setDescription('Show the active join-to-create configuration.'),
     ),
-].map((command) => command.toJSON()).concat(featureCommands);
+].map((command) => command.toJSON()).concat(featureCommands, voiceCommands);
 
 export const commandMentionDescriptions = slashCommands.map((command) => ({
   name: command.name,
@@ -108,7 +109,7 @@ export const commandMentionDescriptions = slashCommands.map((command) => ({
 
 const helpCategories = [
   ['general', 'General', 'Core commands and profile tools.', '🏠', ['ping', 'help', 'userinfo', 'profile', 'poll', 'afk']],
-  ['community', 'Community', 'Tickets, confessions, and server interaction.', '💬', ['ticket', 'confess', 'snipe', 'editsnipe', 'activity']],
+  ['community', 'Community', 'Tickets, confessions, and server interaction.', '💬', ['ticket', 'confess', 'snipe', 'editsnipe', 'activity', 'roomtrust', 'roomban']],
   ['economy', 'Economy', 'Levels, coins, shop, and rewards.', '🪙', ['rank', 'balance', 'daily', 'givecoins', 'rate', 'leaderboard', 'vcleaderboard', 'shop', 'economy']],
   ['moderation', 'Moderation', 'Staff moderation tools.', '🛡️', ['mod']],
   ['admin', 'Admin', 'Setup, dashboard-connected systems, and server controls.', '⚙️', ['setup', 'verification', 'role', 'emoji', 'raid', 'backup', 'analytics', 'invites', 'bot', 'admin']],
@@ -155,6 +156,11 @@ export async function runSlashCommand(interaction) {
 
   if (interaction.commandName === 'admin') {
     await runAdminCommand(interaction);
+    return;
+  }
+
+  if (interaction.commandName === 'roomtrust' || interaction.commandName === 'roomban') {
+    await runVoiceSlashCommand(interaction);
     return;
   }
 

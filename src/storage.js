@@ -98,6 +98,10 @@ export function createGuildData() {
     },
     roleMenus: {},
     voiceRooms: {},
+    roomAccess: {
+      trusted: {},
+      banned: {},
+    },
     tickets: {},
     reminders: {},
     warnings: {},
@@ -160,6 +164,10 @@ function mergeDefaults(data) {
       activity: {
         ...createGuildData().activity,
         ...(guildData.activity || {}),
+      },
+      roomAccess: {
+        ...createGuildData().roomAccess,
+        ...(guildData.roomAccess || {}),
       },
     };
   }

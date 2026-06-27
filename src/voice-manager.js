@@ -6,6 +6,7 @@ import {
   EmbedBuilder,
   ModalBuilder,
   PermissionFlagsBits,
+  SlashCommandBuilder,
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -17,6 +18,48 @@ import { getGuildData, updateGuildData } from './storage.js';
 
 const temporaryRooms = new Map();
 const roomEmojiPool = ['🌸', '☁️', '✨', '🌷', '🫧', '⭐', '🍓', '🌙', '🧸', '🎧'];
+const roomStyles = [
+  { label: 'Cute', value: 'cute', emoji: '🌸', template: "{name}'s Garden" },
+  { label: 'Chill', value: 'chill', emoji: '🌙', template: "{name}'s Lounge" },
+  { label: 'Gaming', value: 'gaming', emoji: '🎮', template: "{name}'s Party" },
+  { label: 'Music', value: 'music', emoji: '🎧', template: "{name}'s Studio" },
+  { label: 'Private', value: 'private', emoji: '🔒', template: "{name}'s Room" },
+];
+
+export const voiceCommands = [
+  new SlashCommandBuilder()
+    .setName('roomtrust')
+    .setDescription('Manage users who are always allowed into your temporary voice rooms.')
+    .addSubcommand((sub) =>
+      sub
+        .setName('add')
+        .setDescription('Always allow a user into your future rooms.')
+        .addUserOption((option) => option.setName('user').setDescription('User to trust.').setRequired(true)),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('remove')
+        .setDescription('Remove a user from your trusted room list.')
+        .addUserOption((option) => option.setName('user').setDescription('User to remove.').setRequired(true)),
+    )
+    .addSubcommand((sub) => sub.setName('list').setDescription('Show your trusted room list.')),
+  new SlashCommandBuilder()
+    .setName('roomban')
+    .setDescription('Manage users who are blocked from your temporary voice rooms.')
+    .addSubcommand((sub) =>
+      sub
+        .setName('add')
+        .setDescription('Always block a user from your future rooms.')
+        .addUserOption((option) => option.setName('user').setDescription('User to block.').setRequired(true)),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('remove')
+        .setDescription('Remove a user from your room ban list.')
+        .addUserOption((option) => option.setName('user').setDescription('User to remove.').setRequired(true)),
+    )
+    .addSubcommand((sub) => sub.setName('list').setDescription('Show your room ban list.')),
+].map((command) => command.toJSON());
 
 export async function handleVoiceStateUpdate(oldState, newState) {
   if (
@@ -179,6 +222,21 @@ export async function handleVoiceButton(interaction) {
     return;
   }
 
+  if (interaction.customId === 'voice_style') {
+    await showStylePicker(interaction, room);
+    return;
+  }
+
+  if (interaction.customId === 'voice_invite') {
+    await sendRoomInvite(interaction, room);
+    return;
+  }
+
+  if (interaction.customId === 'voice_transfer') {
+    await showTransferPicker(interaction, room);
+    return;
+  }
+
   if (interaction.customId === 'voice_permit') {
     await showUserPicker(interaction, room, 'permit');
     return;
@@ -211,6 +269,20 @@ export async function handleVoiceSelect(interaction) {
       content: 'Only the room owner can update this room.',
       ephemeral: true,
     });
+    return;
+  }
+
+  if (selectAction === 'voice_style_select') {
+    const style = roomStyles.find((item) => item.value === interaction.values?.[0]);
+    if (!style) {
+      await interaction.reply({ content: 'That room style is not available.', ephemeral: true });
+      return;
+    }
+
+    const owner = await interaction.guild.members.fetch(room.ownerId).catch(() => null);
+    const name = buildStyledRoomName(style, owner?.displayName || interaction.member.displayName);
+    await room.channel.setName(name, 'S.A.I room owner changed the room style.');
+    await interaction.reply({ content: `Room style changed to **${style.label}**: ${name}`, ephemeral: true });
     return;
   }
 
@@ -253,6 +325,23 @@ export async function handleVoiceSelect(interaction) {
     return;
   }
 
+  if (selectAction === 'voice_transfer_select') {
+    if (!room.channel.members.has(member.id)) {
+      await interaction.reply({
+        content: `${member} needs to be inside this room before ownership can be transferred.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    await transferRoomOwnership(interaction.guild.id, room, member.id);
+    await interaction.reply({
+      content: `${member} now owns this room.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
   if (selectAction === 'voice_deny_select') {
     await denyMember(room, member);
     await interaction.reply({
@@ -260,6 +349,59 @@ export async function handleVoiceSelect(interaction) {
       ephemeral: true,
     });
   }
+}
+
+export async function runVoiceSlashCommand(interaction) {
+  if (interaction.commandName !== 'roomtrust' && interaction.commandName !== 'roomban') return false;
+
+  const listType = interaction.commandName === 'roomtrust' ? 'trusted' : 'banned';
+  const subcommand = interaction.options.getSubcommand();
+  const target = interaction.options.getUser('user');
+
+  if (target?.bot) {
+    await interaction.reply({ content: 'Bot accounts do not need room access rules.', ephemeral: true });
+    return true;
+  }
+
+  if (target?.id === interaction.user.id) {
+    await interaction.reply({ content: 'You cannot add yourself to your own room list.', ephemeral: true });
+    return true;
+  }
+
+  if (subcommand === 'add' || subcommand === 'remove') {
+    await updateGuildData(interaction.guild.id, (guildData) => {
+      const list = getRoomAccessList(guildData, listType, interaction.user.id);
+      const otherList = getRoomAccessList(guildData, listType === 'trusted' ? 'banned' : 'trusted', interaction.user.id);
+
+      if (subcommand === 'add') {
+        if (!list.includes(target.id)) list.push(target.id);
+        const otherIndex = otherList.indexOf(target.id);
+        if (otherIndex >= 0) otherList.splice(otherIndex, 1);
+      } else {
+        const index = list.indexOf(target.id);
+        if (index >= 0) list.splice(index, 1);
+      }
+    });
+
+    const label = listType === 'trusted' ? 'trusted room list' : 'room ban list';
+    await interaction.reply({
+      content: subcommand === 'add'
+        ? `${target} was added to your ${label}.`
+        : `${target} was removed from your ${label}.`,
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  const guildData = await getGuildData(interaction.guild.id);
+  const ids = getRoomAccessList(guildData, listType, interaction.user.id);
+  const label = listType === 'trusted' ? 'Trusted users' : 'Banned users';
+  await interaction.reply({
+    content: ids.length ? `**${label}:**\n${ids.map((id) => `<@${id}>`).join('\n')}` : `Your ${label.toLowerCase()} list is empty.`,
+    ephemeral: true,
+    allowedMentions: { parse: [] },
+  });
+  return true;
 }
 
 export async function handleVoiceModal(interaction) {
@@ -359,8 +501,69 @@ async function denyMember(room, member) {
   }
 }
 
+async function transferRoomOwnership(guildId, room, newOwnerId) {
+  const oldOwnerId = room.ownerId;
+  room.ownerId = newOwnerId;
+
+  await room.channel.permissionOverwrites.edit(newOwnerId, {
+    ViewChannel: true,
+    Connect: true,
+    ManageChannels: true,
+    MoveMembers: true,
+  });
+
+  if (oldOwnerId && oldOwnerId !== newOwnerId) {
+    await room.channel.permissionOverwrites.edit(oldOwnerId, {
+      ManageChannels: null,
+      MoveMembers: null,
+    }).catch(() => {});
+  }
+
+  await updateGuildData(guildId, (guildData) => {
+    if (guildData.voiceRooms[room.channel.id]) {
+      guildData.voiceRooms[room.channel.id].ownerId = newOwnerId;
+    }
+  });
+}
+
+function buildStyledRoomName(style, displayName) {
+  return `${style.emoji} ${style.template.replace('{name}', displayName)}`.slice(0, 100);
+}
+
+function getRoomAccessList(guildData, listType, ownerId) {
+  guildData.roomAccess ||= { trusted: {}, banned: {} };
+  guildData.roomAccess.trusted ||= {};
+  guildData.roomAccess.banned ||= {};
+  guildData.roomAccess[listType][ownerId] ||= [];
+  return guildData.roomAccess[listType][ownerId];
+}
+
+async function getInviteChannel(guild) {
+  const guildData = await getGuildData(guild.id);
+  const configured = guildData.config.activityChannelId
+    ? await guild.channels.fetch(guildData.config.activityChannelId).catch(() => null)
+    : null;
+
+  if (configured?.isTextBased() && configured.permissionsFor(guild.members.me)?.has(PermissionFlagsBits.SendMessages)) {
+    return configured;
+  }
+
+  if (guild.systemChannel?.isTextBased() && guild.systemChannel.permissionsFor(guild.members.me)?.has(PermissionFlagsBits.SendMessages)) {
+    return guild.systemChannel;
+  }
+
+  return guild.channels.cache.find((channel) =>
+    channel.isTextBased()
+    && channel.type === ChannelType.GuildText
+    && channel.permissionsFor(guild.members.me)?.has(PermissionFlagsBits.SendMessages),
+  ) || null;
+}
+
 async function createTemporaryRoom(newState) {
   const { guild, member, channel: joinChannel } = newState;
+  const guildData = await getGuildData(guild.id);
+  const trustedIds = getRoomAccessList(guildData, 'trusted', member.id);
+  const bannedIds = getRoomAccessList(guildData, 'banned', member.id);
   const roomEmoji = roomEmojiPool[Math.floor(Math.random() * roomEmojiPool.length)];
   const room = await guild.channels.create({
     name: `${roomEmoji} ${member.displayName}'s Room`,
@@ -380,6 +583,20 @@ async function createTemporaryRoom(newState) {
           PermissionFlagsBits.MoveMembers,
         ],
       },
+      ...trustedIds
+        .filter((userId) => userId !== member.id && !bannedIds.includes(userId))
+        .slice(0, 50)
+        .map((userId) => ({
+          id: userId,
+          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect],
+        })),
+      ...bannedIds
+        .filter((userId) => userId !== member.id)
+        .slice(0, 50)
+        .map((userId) => ({
+          id: userId,
+          deny: [PermissionFlagsBits.Connect],
+        })),
     ],
     reason: 'S.A.I join-to-create voice room.',
   });
@@ -435,8 +652,13 @@ async function sendControlPanel(channel, ownerId) {
     new ActionRowBuilder().addComponents(
       button('voice_rename', 'Rename', ButtonStyle.Primary),
       button('voice_limit', 'Limit', ButtonStyle.Primary),
+      button('voice_style', 'Style', ButtonStyle.Primary),
       button('voice_claim', 'Claim', ButtonStyle.Success),
       button('voice_delete', 'Delete', ButtonStyle.Danger),
+    ),
+    new ActionRowBuilder().addComponents(
+      button('voice_invite', 'Invite', ButtonStyle.Success),
+      button('voice_transfer', 'Transfer', ButtonStyle.Secondary),
     ),
     new ActionRowBuilder().addComponents(
       button('voice_permit', 'Allow User', ButtonStyle.Success),
@@ -452,6 +674,79 @@ async function sendControlPanel(channel, ownerId) {
 
 function button(customId, label, style) {
   return new ButtonBuilder().setCustomId(customId).setLabel(label).setStyle(style);
+}
+
+async function showStylePicker(interaction, room) {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`voice_style_select:${room.channel.id}`)
+    .setPlaceholder('Choose a room style')
+    .addOptions(
+      roomStyles.map((style) => ({
+        label: style.label,
+        value: style.value,
+        emoji: style.emoji,
+        description: style.template.replace('{name}', interaction.member.displayName).slice(0, 100),
+      })),
+    );
+
+  await interaction.reply({
+    content: 'Pick a style for this voice room.',
+    components: [new ActionRowBuilder().addComponents(select)],
+    ephemeral: true,
+  });
+}
+
+async function sendRoomInvite(interaction, room) {
+  const inviteChannel = await getInviteChannel(interaction.guild);
+  if (!inviteChannel) {
+    await interaction.reply({
+      content: 'I could not find a public text channel where I can post the invite.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await inviteChannel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle('Voice Room Open')
+        .setDescription(`${interaction.member} opened ${room.channel}.\nJoin if you want to hang out.`),
+    ],
+    allowedMentions: { users: [interaction.user.id] },
+  });
+  await interaction.reply({ content: `Invite posted in ${inviteChannel}.`, ephemeral: true });
+}
+
+async function showTransferPicker(interaction, room) {
+  const members = room.channel.members
+    .filter((member) => member.id !== interaction.user.id && !member.user.bot)
+    .first(25);
+
+  if (members.length === 0) {
+    await interaction.reply({
+      content: 'There is nobody else in this room to transfer ownership to.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`voice_transfer_select:${room.channel.id}`)
+    .setPlaceholder('Choose the new room owner')
+    .addOptions(
+      members.map((member) => ({
+        label: member.displayName.slice(0, 100),
+        description: member.user.tag.slice(0, 100),
+        value: member.id,
+      })),
+    );
+
+  await interaction.reply({
+    content: 'Pick who should own this room.',
+    components: [new ActionRowBuilder().addComponents(select)],
+    ephemeral: true,
+  });
 }
 
 async function showUserPicker(interaction, room, action) {

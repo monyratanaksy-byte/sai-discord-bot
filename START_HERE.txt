@@ -53,7 +53,7 @@ if [ -f /home/container/package.json ]; then /usr/local/bin/npm install; fi; /us
 
 Expected healthy console output:
 S.A.I is online as S.A.I#2790
-Registered 32 slash commands for guild 1481641949651013765.
+Registered 34 slash commands for guild 1481641949651013765.
 
 Main setup commands:
 /setup template
@@ -76,9 +76,20 @@ Main setup commands:
 /rate
 /activity setup
 /vcleaderboard
+/roomtrust add
+/roomban add
 /shop view
 /shop add-role
 /shop remove-role
+
+Voice room controls:
+New temporary voice rooms include buttons for room style, public invite, owner
+transfer, allow user, kick user, and deny user.
+
+Persistent room access:
+Use /roomtrust add user:@User to always allow someone into your future rooms.
+Use /roomban add user:@User to always block someone from your future rooms.
+Use /roomtrust list or /roomban list to check your saved lists.
 
 Public activity setup:
 Use /activity setup channel:#community-progress
