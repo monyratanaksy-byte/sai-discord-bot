@@ -125,27 +125,28 @@ export async function handleVoiceStateUpdate(oldState, newState) {
 }
 
 export async function handleVoiceButton(interaction) {
-  const room = await getRoomForInteraction(interaction);
-  if (!room) {
-    await interaction.reply({
-      content: 'This control panel is only for active S.A.I voice rooms.',
-      ephemeral: true,
-    });
-    return;
-  }
+  try {
+    const room = await getRoomForInteraction(interaction);
+    if (!room) {
+      await interaction.reply({
+        content: 'This control panel is no longer connected to an active S.A.I voice room. Create a new room to get a fresh panel.',
+        ephemeral: true,
+      });
+      return;
+    }
 
-  if (interaction.customId === 'voice_claim') {
-    await claimRoom(interaction, room);
-    return;
-  }
+    if (interaction.customId === 'voice_claim') {
+      await claimRoom(interaction, room);
+      return;
+    }
 
-  if (!(await isRoomOwner(interaction, room))) {
-    await interaction.reply({
-      content: 'Only the room owner can use this control.',
-      ephemeral: true,
-    });
-    return;
-  }
+    if (!(await isRoomOwner(interaction, room))) {
+      await interaction.reply({
+        content: 'Only the room owner can use this control.',
+        ephemeral: true,
+      });
+      return;
+    }
 
   if (interaction.customId === 'voice_lock') {
     await room.channel.permissionOverwrites.edit(interaction.guild.id, {
@@ -255,6 +256,10 @@ export async function handleVoiceButton(interaction) {
 
   if (interaction.customId === 'voice_deny') {
     await showUserPicker(interaction, room, 'deny');
+  }
+  } catch (error) {
+    console.error('Voice button interaction failed:', error);
+    await replyVoiceFailure(interaction);
   }
 }
 
@@ -402,24 +407,25 @@ export async function runVoiceSlashCommand(interaction) {
 }
 
 export async function handleVoiceModal(interaction) {
-  const [modalAction, channelId] = interaction.customId.split(':');
-  const room = await getRoomById(interaction.guild, channelId);
+  try {
+    const [modalAction, channelId] = interaction.customId.split(':');
+    const room = await getRoomById(interaction.guild, channelId);
 
-  if (!room) {
-    await interaction.reply({
-      content: 'That voice room no longer exists.',
-      ephemeral: true,
-    });
-    return;
-  }
+    if (!room) {
+      await interaction.reply({
+        content: 'That voice room no longer exists. Create a new room to get a fresh panel.',
+        ephemeral: true,
+      });
+      return;
+    }
 
-  if (!(await isRoomOwner(interaction, room))) {
-    await interaction.reply({
-      content: 'Only the room owner can update this room.',
-      ephemeral: true,
-    });
-    return;
-  }
+    if (!(await isRoomOwner(interaction, room))) {
+      await interaction.reply({
+        content: 'Only the room owner can update this room.',
+        ephemeral: true,
+      });
+      return;
+    }
 
   if (modalAction === 'voice_rename_modal') {
     const name = interaction.fields.getTextInputValue('name').trim();
@@ -478,6 +484,23 @@ export async function handleVoiceModal(interaction) {
       content: `${member} can no longer join this room.`,
       ephemeral: true,
     });
+  }
+  } catch (error) {
+    console.error('Voice modal interaction failed:', error);
+    await replyVoiceFailure(interaction);
+  }
+}
+
+async function replyVoiceFailure(interaction) {
+  const payload = {
+    content: 'That voice room control is stale or Discord blocked the action. Create a new room panel and try again.',
+    ephemeral: true,
+  };
+
+  if (interaction.deferred || interaction.replied) {
+    await interaction.followUp(payload).catch(() => {});
+  } else {
+    await interaction.reply(payload).catch(() => {});
   }
 }
 
@@ -926,7 +949,19 @@ async function getRoomForInteraction(interaction) {
 
 async function getRoomById(guild, channelId) {
   const cached = temporaryRooms.get(channelId);
-  if (cached) return cached;
+  if (cached) {
+    const channel = await guild.channels.fetch(channelId).catch(() => null);
+    if (channel) {
+      cached.channel = channel;
+      return cached;
+    }
+
+    temporaryRooms.delete(channelId);
+    await updateGuildData(guild.id, (data) => {
+      delete data.voiceRooms[channelId];
+    });
+    return null;
+  }
 
   const guildData = await getGuildData(guild.id);
   const saved = guildData.voiceRooms[channelId];
