@@ -1074,6 +1074,10 @@ async function runSetup(interaction) {
 }
 
 async function runTestVerify(interaction) {
+  const verifySiteUrl = config.verifySiteUrl?.replace(/\/+$/, '');
+  const siteVerifyUrl = verifySiteUrl
+    ? `${verifySiteUrl}/verify?guild_id=${encodeURIComponent(interaction.guildId)}`
+    : null;
   const redirectUri = config.verifyRedirectUri;
   const state = Buffer.from(JSON.stringify({
     guildId: interaction.guildId,
@@ -1091,7 +1095,7 @@ async function runTestVerify(interaction) {
     params.set('redirect_uri', redirectUri);
   }
 
-  const url = `https://discord.com/oauth2/authorize?${params.toString()}`;
+  const url = siteVerifyUrl || `https://discord.com/oauth2/authorize?${params.toString()}`;
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle('S.A.I Test Verify')
@@ -1100,9 +1104,9 @@ async function runTestVerify(interaction) {
       { name: 'Permission Requested', value: '`Join servers for you` and basic profile access.' },
       {
         name: 'Important',
-        value: redirectUri
-          ? 'The link can authorize the user. The next step is adding a callback endpoint that exchanges the code and stores the access token.'
-          : 'VERIFY_REDIRECT_URI is not set yet, so this is only a test link. To actually complete OAuth, add a public callback URL in Discord Developer Portal and Katabump .env.',
+        value: siteVerifyUrl
+          ? 'This link uses your configured verify site and can complete the OAuth callback if the Netlify secrets are set.'
+          : 'VERIFY_SITE_URL is not set yet, so this is only a direct OAuth test link. Set VERIFY_SITE_URL to your Netlify verify site URL when deployed.',
       },
       {
         name: 'Can S.A.I force-add users?',

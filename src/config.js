@@ -11,6 +11,7 @@ export const config = {
   dashboardFastSync: ['1', 'true', 'yes', 'on'].includes(String(process.env.DASHBOARD_FAST_SYNC || '').toLowerCase()),
   confessionLogWebhookUrl: process.env.CONFESSION_LOG_WEBHOOK_URL,
   verifyRedirectUri: process.env.VERIFY_REDIRECT_URI,
+  verifySiteUrl: process.env.VERIFY_SITE_URL,
 };
 
 export function requireConfig(keys) {
