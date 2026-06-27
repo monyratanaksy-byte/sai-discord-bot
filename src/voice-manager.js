@@ -264,7 +264,7 @@ export async function handleVoiceButton(interaction) {
 }
 
 export async function handleVoiceSelect(interaction) {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferUpdate();
 
   try {
     const [selectAction, channelId] = interaction.customId.split(':');
@@ -351,6 +351,7 @@ async function finishVoiceSelect(interaction, content) {
     components: [],
     allowedMentions: { parse: [] },
   });
+  scheduleDeleteInteractionReply(interaction, 8_000);
 }
 
 export async function runVoiceSlashCommand(interaction) {
@@ -408,29 +409,24 @@ export async function runVoiceSlashCommand(interaction) {
 
 export async function handleVoiceModal(interaction) {
   try {
+    await interaction.deferReply({ ephemeral: true });
     const [modalAction, channelId] = interaction.customId.split(':');
     const room = await getRoomById(interaction.guild, channelId);
 
     if (!room) {
-      await interaction.reply({
-        content: 'That voice room no longer exists. Create a new room to get a fresh panel.',
-        ephemeral: true,
-      });
+      await interaction.editReply('That voice room no longer exists. Create a new room to get a fresh panel.');
       return;
     }
 
     if (!(await isRoomOwner(interaction, room))) {
-      await interaction.reply({
-        content: 'Only the room owner can update this room.',
-        ephemeral: true,
-      });
+      await interaction.editReply('Only the room owner can update this room.');
       return;
     }
 
   if (modalAction === 'voice_rename_modal') {
     const name = interaction.fields.getTextInputValue('name').trim();
     await room.channel.setName(name, 'S.A.I room owner renamed the room.');
-    await interaction.reply({ content: `Room renamed to **${name}**.`, ephemeral: true });
+    await interaction.editReply(`Room renamed to **${name}**.`);
     return;
   }
 
@@ -439,18 +435,12 @@ export async function handleVoiceModal(interaction) {
     const limit = Number.parseInt(rawLimit, 10);
 
     if (!Number.isInteger(limit) || limit < 0 || limit > 99) {
-      await interaction.reply({
-        content: 'Please enter a number from 0 to 99.',
-        ephemeral: true,
-      });
+      await interaction.editReply('Please enter a number from 0 to 99.');
       return;
     }
 
     await room.channel.setUserLimit(limit, 'S.A.I room owner changed the limit.');
-    await interaction.reply({
-      content: limit === 0 ? 'User limit removed.' : `User limit set to ${limit}.`,
-      ephemeral: true,
-    });
+    await interaction.editReply(limit === 0 ? 'User limit removed.' : `User limit set to ${limit}.`);
     return;
   }
 
@@ -462,28 +452,19 @@ export async function handleVoiceModal(interaction) {
       : null;
 
     if (!member) {
-      await interaction.reply({
-        content: 'Could not find that user. Use a mention or user ID.',
-        ephemeral: true,
-      });
+      await interaction.editReply('Could not find that user. Use a mention or user ID.');
       return;
     }
 
     if (modalAction === 'voice_permit_modal') {
       await permitMember(room, member);
-      await interaction.reply({
-        content: `${member} can now see and join this room.`,
-        ephemeral: true,
-      });
+      await interaction.editReply(`${member} can now see and join this room.`);
       return;
     }
 
     await denyMember(room, member);
 
-    await interaction.reply({
-      content: `${member} can no longer join this room.`,
-      ephemeral: true,
-    });
+    await interaction.editReply(`${member} can no longer join this room.`);
   }
   } catch (error) {
     console.error('Voice modal interaction failed:', error);
@@ -811,10 +792,9 @@ async function showStylePicker(interaction, room) {
       })),
     );
 
-  await interaction.reply({
+  await sendTemporaryPicker(interaction, {
     content: 'Pick a style for this voice room.',
     components: [new ActionRowBuilder().addComponents(select)],
-    ephemeral: true,
   });
 }
 
@@ -864,10 +844,9 @@ async function showTransferPicker(interaction, room) {
       })),
     );
 
-  await interaction.reply({
+  await sendTemporaryPicker(interaction, {
     content: 'Pick who should own this room.',
     components: [new ActionRowBuilder().addComponents(select)],
-    ephemeral: true,
   });
 }
 
@@ -878,12 +857,11 @@ async function showUserPicker(interaction, room, action) {
     .setMinValues(1)
     .setMaxValues(1);
 
-  await interaction.reply({
+  await sendTemporaryPicker(interaction, {
     content: action === 'permit'
       ? 'Pick the user you want to allow into this room.'
       : 'Pick the user you want to block from this room.',
     components: [new ActionRowBuilder().addComponents(select)],
-    ephemeral: true,
   });
 }
 
@@ -911,11 +889,24 @@ async function showKickPicker(interaction, room) {
       })),
     );
 
-  await interaction.reply({
+  await sendTemporaryPicker(interaction, {
     content: 'Pick the user you want to kick from this room.',
     components: [new ActionRowBuilder().addComponents(select)],
-    ephemeral: true,
   });
+}
+
+async function sendTemporaryPicker(interaction, payload) {
+  await interaction.reply({
+    ...payload,
+    allowedMentions: { parse: [] },
+  });
+  scheduleDeleteInteractionReply(interaction, 30_000);
+}
+
+function scheduleDeleteInteractionReply(interaction, delayMs) {
+  setTimeout(() => {
+    interaction.deleteReply().catch(() => {});
+  }, delayMs).unref?.();
 }
 
 async function showUserAccessModal(interaction, room, action) {
