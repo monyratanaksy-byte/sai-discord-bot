@@ -19,7 +19,7 @@ import { getGuildData, updateGuildData } from './storage.js';
 const temporaryRooms = new Map();
 const roomNameCooldowns = new Map();
 const roomEmojiPool = ['🌸', '☁️', '✨', '🌷', '🫧', '⭐', '🍓', '🌙', '🧸', '🎧'];
-const standardRoomPrefix = 'Garden';
+const standardRoomPrefix = '🌿 Lounge';
 const roomNameCooldownMs = 90_000;
 
 export const voiceCommands = [
@@ -230,7 +230,7 @@ export async function handleVoiceButton(interaction) {
   }
 
   if (interaction.customId === 'voice_invite') {
-    await sendRoomInvite(interaction, room);
+    await showInvitePicker(interaction, room);
     return;
   }
 
@@ -299,6 +299,11 @@ export async function handleVoiceSelect(interaction) {
 
       await member.voice.disconnect('S.A.I room owner kicked this member from the temporary room.');
       await finishVoiceSelect(interaction, `${member} was kicked from this room.`);
+      return;
+    }
+
+    if (selectAction === 'voice_invite_select') {
+      await sendRoomInvite(interaction, room, member);
       return;
     }
 
@@ -540,27 +545,6 @@ function getRoomAccessList(guildData, listType, ownerId) {
   return guildData.roomAccess[listType][ownerId];
 }
 
-async function getInviteChannel(guild) {
-  const guildData = await getGuildData(guild.id);
-  const configured = guildData.config.activityChannelId
-    ? await guild.channels.fetch(guildData.config.activityChannelId).catch(() => null)
-    : null;
-
-  if (configured?.isTextBased() && configured.permissionsFor(guild.members.me)?.has(PermissionFlagsBits.SendMessages)) {
-    return configured;
-  }
-
-  if (guild.systemChannel?.isTextBased() && guild.systemChannel.permissionsFor(guild.members.me)?.has(PermissionFlagsBits.SendMessages)) {
-    return guild.systemChannel;
-  }
-
-  return guild.channels.cache.find((channel) =>
-    channel.isTextBased()
-    && channel.type === ChannelType.GuildText
-    && channel.permissionsFor(guild.members.me)?.has(PermissionFlagsBits.SendMessages),
-  ) || null;
-}
-
 function isBooster(member, guildData) {
   if (member?.premiumSince || member?.premiumSinceTimestamp) return true;
   const boosterRoleId = guildData.config?.boosterRoleId;
@@ -595,7 +579,7 @@ async function getBoosterRoomForOwner(guild, ownerId, guildData) {
 function nextGardenRoomName(guild) {
   const usedNumbers = new Set();
   for (const channel of guild.channels.cache.values()) {
-    const match = channel.name.match(/^Garden (\d+)$/i);
+    const match = channel.name.match(/^🌿 Lounge (\d+)$/i) || channel.name.match(/^Lounge (\d+)$/i);
     if (match) usedNumbers.add(Number(match[1]));
   }
 
@@ -732,6 +716,7 @@ async function createBoosterRoom(newState, guildData) {
         guildData.voiceRooms[room.id].textChannelId = textChannel.id;
       }
     });
+    await sendBoosterRoomWelcome(textChannel, room, member);
   }
   await sendControlPanel(room, member.id);
 }
@@ -777,26 +762,66 @@ function button(customId, label, style) {
   return new ButtonBuilder().setCustomId(customId).setLabel(label).setStyle(style);
 }
 
-async function sendRoomInvite(interaction, room) {
-  const inviteChannel = await getInviteChannel(interaction.guild);
-  if (!inviteChannel) {
-    await interaction.reply({
-      content: 'I could not find a public text channel where I can post the invite.',
-      ephemeral: true,
-    });
-    return;
-  }
-
-  await inviteChannel.send({
+async function sendBoosterRoomWelcome(textChannel, voiceChannel, owner) {
+  await textChannel.send({
     embeds: [
       new EmbedBuilder()
         .setColor(0x57f287)
-        .setTitle('Voice Room Open')
-        .setDescription(`${interaction.member} opened ${room.channel}.\nJoin if you want to hang out.`),
+        .setTitle('Booster Room Open')
+        .setDescription(
+          [
+            `Welcome to ${voiceChannel}.`,
+            `${owner} boosted the server and unlocked this permanent room.`,
+            'Use the voice control panel here to manage access, limits, lock, hide, and invites.',
+          ].join('\n'),
+        ),
     ],
-    allowedMentions: { users: [interaction.user.id] },
+    allowedMentions: { users: [owner.id] },
+  }).catch(() => {});
+}
+
+async function showInvitePicker(interaction, room) {
+  const select = new UserSelectMenuBuilder()
+    .setCustomId(`voice_invite_select:${room.channel.id}`)
+    .setPlaceholder('Choose a friend to invite')
+    .setMinValues(1)
+    .setMaxValues(1);
+
+  await sendTemporaryPicker(interaction, {
+    content: 'Pick the friend you want S.A.I to DM with a join button.',
+    components: [new ActionRowBuilder().addComponents(select)],
   });
-  await interaction.reply({ content: `Invite posted in ${inviteChannel}.`, ephemeral: true });
+}
+
+async function sendRoomInvite(interaction, room, member) {
+  if (member.user.bot) {
+    await finishVoiceSelect(interaction, 'Bots cannot be invited by DM.');
+    return;
+  }
+
+  const channelUrl = `https://discord.com/channels/${interaction.guild.id}/${room.channel.id}`;
+  const inviteButton = new ButtonBuilder()
+    .setLabel('Join Voice Room')
+    .setStyle(ButtonStyle.Link)
+    .setURL(channelUrl);
+
+  const embed = new EmbedBuilder()
+    .setColor(0x57f287)
+    .setTitle('Voice Room Invite')
+    .setDescription(`${interaction.member.displayName} invited you to join ${room.channel} in **${interaction.guild.name}**.`);
+
+  const sent = await member.send({
+    embeds: [embed],
+    components: [new ActionRowBuilder().addComponents(inviteButton)],
+    allowedMentions: { parse: [] },
+  }).then(() => true).catch(() => false);
+
+  if (!sent) {
+    await finishVoiceSelect(interaction, `I could not DM ${member}. They may have DMs closed.`);
+    return;
+  }
+
+  await finishVoiceSelect(interaction, `Invite sent to ${member}.`);
 }
 
 async function showTransferPicker(interaction, room) {
