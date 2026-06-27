@@ -624,10 +624,11 @@ async function handleJoinToCreate(newState) {
 
 async function createStandardGardenRoom(newState) {
   const { guild, member, channel: joinChannel } = newState;
+  const guildData = await getGuildData(guild.id);
   const room = await guild.channels.create({
     name: nextGardenRoomName(guild),
     type: ChannelType.GuildVoice,
-    parent: joinChannel?.parentId || null,
+    parent: guildData.config.normalVoiceCategoryId || joinChannel?.parentId || null,
     permissionOverwrites: [
       {
         id: guild.id,
@@ -669,7 +670,7 @@ async function createBoosterRoom(newState, guildData) {
   const room = await guild.channels.create({
     name: `${roomEmoji} ${member.displayName}'s Room`,
     type: ChannelType.GuildVoice,
-    parent: joinChannel?.parentId || null,
+    parent: guildData.config.boosterVoiceCategoryId || joinChannel?.parentId || null,
     permissionOverwrites: [
       {
         id: guild.id,

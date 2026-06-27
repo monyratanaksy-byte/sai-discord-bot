@@ -53,11 +53,12 @@ if [ -f /home/container/package.json ]; then /usr/local/bin/npm install; fi; /us
 
 Expected healthy console output:
 S.A.I is online as S.A.I#2790
-Registered 34 slash commands for guild 1481641949651013765.
+Registered 33 slash commands for guild 1481641949651013765.
 
 Main setup commands:
 /setup template
 /setup welcome
+/setup voice-categories
 /setup roles
 /setup tickets
 /setup logs
@@ -67,7 +68,6 @@ Main setup commands:
 /setup confession
 /emoji add
 /role give-everyone
-/verification create
 /bot profile
 /help
 /balance
@@ -84,12 +84,17 @@ Main setup commands:
 
 Voice room controls:
 Server boosters get a saved personal voice room when they join the join-to-create
-channel. Their room stays when empty, reopens for them next time, and includes
-buttons for rename, limit, lock, unlock, hide, show, public invite, owner
-transfer, allow user, kick user, deny user, and delete.
+channel. Their room is created under the booster perk category, stays when
+empty, reopens for them next time, and includes buttons for rename, limit, lock,
+unlock, hide, show, public invite, owner transfer, allow user, kick user, deny
+user, and delete.
 
 Non-boosters get simple temporary rooms named Garden 1, Garden 2, etc. They can
-create and use the room, but they do not get the owner control panel.
+create and use the room under the normal voice category, but they do not get the
+owner control panel.
+
+Voice category setup:
+Use /setup voice-categories normal:#voice booster:#booster-perks
 
 Persistent room access:
 Use /roomtrust add user:@User to always allow someone into your future rooms.
@@ -112,14 +117,15 @@ One-command server setup:
 Use /setup template
 
 This creates the main categories, staff/verified/muted roles, welcome, rules,
-verify, ticket, logs, bot commands, temp text, stats, and join-to-create voice
-layout. Run it with an Administrator account.
+ticket, logs, bot commands, temp text, stats, booster perks, auto role, and
+join-to-create voice layout. Run it with an Administrator account.
 
-Verification panel:
-Use /verification create channel:#verify role:@Verified
+Welcome and auto role:
+Use /setup welcome channel:#welcome auto_role:@Member
 
-It sends a professional button panel saying:
-Click the button below to verify your account and unlock the rest of the server.
+New members are welcomed with invite information, member number, and a short
+warm message. The auto role is given immediately on join. There is no rules or
+manual button flow.
 
 Give everyone a role:
 Use /role give-everyone role:@RoleName

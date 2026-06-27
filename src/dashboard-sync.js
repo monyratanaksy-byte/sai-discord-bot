@@ -1,8 +1,5 @@
 import crypto from 'node:crypto';
 import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   ChannelType,
   EmbedBuilder,
   PermissionFlagsBits,
@@ -20,8 +17,11 @@ const recentDirectMessages = [];
 let applicationOwnerIds = [];
 const allowedConfigKeys = new Set([
   'welcomeChannelId',
+  'autoRoleId',
   'verifiedRoleId',
   'rulesText',
+  'normalVoiceCategoryId',
+  'boosterVoiceCategoryId',
   'ticketCategoryId',
   'supportRoleId',
   'logChannelId',
@@ -585,37 +585,30 @@ async function createBackup(guild) {
 
 async function postVerification(guild) {
   const guildData = await getGuildData(guild.id);
-  const { welcomeChannelId, verifiedRoleId } = guildData.config;
-  if (!welcomeChannelId || !verifiedRoleId) {
-    throw new Error('Welcome channel and verified role must be configured.');
+  const { welcomeChannelId } = guildData.config;
+  const autoRoleId = guildData.config.autoRoleId || guildData.config.verifiedRoleId;
+  if (!welcomeChannelId || !autoRoleId) {
+    throw new Error('Welcome channel and auto role must be configured.');
   }
 
   const [channel, role] = await Promise.all([
     guild.channels.fetch(welcomeChannelId).catch(() => null),
-    guild.roles.fetch(verifiedRoleId).catch(() => null),
+    guild.roles.fetch(autoRoleId).catch(() => null),
   ]);
   if (!channel?.isTextBased() || !role) {
-    throw new Error('Configured verification channel or role no longer exists.');
+    throw new Error('Configured welcome channel or auto role no longer exists.');
   }
 
   await channel.send({
     embeds: [
       new EmbedBuilder()
         .setColor(0x57f287)
-        .setTitle('Server Verification')
-        .setDescription('Click the button below to verify your account and unlock the rest of the server.')
+        .setTitle('Welcome System')
+        .setDescription('New members will be welcomed here and automatically given the configured role.')
         .addFields(
-          { name: 'Before You Verify', value: 'Please read the rules and respect the community.' },
-          { name: 'Access', value: `Verification gives you the ${role} role.` },
+          { name: 'Auto Role', value: `${role}`, inline: true },
+          { name: 'Message', value: guildData.config.rulesText || 'Welcome in. We are happy you made it here.' },
         ),
-    ],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('feature:verify')
-          .setLabel('Accept Rules')
-          .setStyle(ButtonStyle.Success),
-      ),
     ],
   });
 }

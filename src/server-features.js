@@ -42,25 +42,44 @@ export const featureCommands = [
     .addSubcommand((sub) =>
       sub
         .setName('welcome')
-        .setDescription('Set the welcome/rules verification flow.')
+        .setDescription('Set the welcome channel and automatic member role.')
         .addChannelOption((option) =>
           option
             .setName('channel')
-            .setDescription('Where welcome/rules messages are posted.')
+            .setDescription('Where welcome messages are posted.')
             .addChannelTypes(ChannelType.GuildText)
             .setRequired(true),
         )
         .addRoleOption((option) =>
           option
-            .setName('verified_role')
-            .setDescription('Role given when a member accepts the rules.')
+            .setName('auto_role')
+            .setDescription('Role automatically given when a member joins.')
             .setRequired(true),
         )
         .addStringOption((option) =>
           option
-            .setName('rules')
-            .setDescription('Short rules text for the welcome panel.')
+            .setName('message')
+            .setDescription('Short custom welcome message.')
             .setRequired(false),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('voice-categories')
+        .setDescription('Set where normal and booster join-to-create rooms are made.')
+        .addChannelOption((option) =>
+          option
+            .setName('normal')
+            .setDescription('Category for normal Garden rooms.')
+            .addChannelTypes(ChannelType.GuildCategory)
+            .setRequired(true),
+        )
+        .addChannelOption((option) =>
+          option
+            .setName('booster')
+            .setDescription('Category for booster perk rooms.')
+            .addChannelTypes(ChannelType.GuildCategory)
+            .setRequired(true),
         ),
     )
     .addSubcommand((sub) =>
@@ -162,6 +181,13 @@ export const featureCommands = [
             .setName('channel')
             .setDescription('Where booster thanks are posted.')
             .addChannelTypes(ChannelType.GuildText)
+            .setRequired(false),
+        )
+        .addChannelOption((option) =>
+          option
+            .setName('category')
+            .setDescription('Category where booster perk voice rooms are created.')
+            .addChannelTypes(ChannelType.GuildCategory)
             .setRequired(false),
         ),
     )
@@ -440,28 +466,6 @@ export const featureCommands = [
         ),
     ),
   new SlashCommandBuilder()
-    .setName('verification')
-    .setDescription('Admin verification panel tools.')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addSubcommand((sub) =>
-      sub
-        .setName('create')
-        .setDescription('Post a professional verification panel.')
-        .addChannelOption((option) =>
-          option
-            .setName('channel')
-            .setDescription('Where to post the verification panel.')
-            .addChannelTypes(ChannelType.GuildText)
-            .setRequired(true),
-        )
-        .addRoleOption((option) =>
-          option
-            .setName('role')
-            .setDescription('Role given after verification.')
-            .setRequired(true),
-        ),
-    ),
-  new SlashCommandBuilder()
     .setName('bot')
     .setDescription('Admin bot profile tools.')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -514,7 +518,6 @@ export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'shop') return runShop(interaction);
   if (interaction.commandName === 'emoji') return runEmoji(interaction);
   if (interaction.commandName === 'role') return runRole(interaction);
-  if (interaction.commandName === 'verification') return runVerification(interaction);
   if (interaction.commandName === 'bot') return runBotProfile(interaction);
   return false;
 }
@@ -523,7 +526,6 @@ export async function handleFeatureButton(interaction) {
   const [scope, action, ...args] = interaction.customId.split(':');
   if (scope !== 'feature') return false;
 
-  if (action === 'verify') return verifyMember(interaction);
   if (action === 'role') return toggleRole(interaction, args[0]);
   if (action === 'ticket') return openTicket(interaction);
   if (action === 'close_ticket') return closeTicket(interaction);
@@ -679,22 +681,40 @@ export async function handleFeatureGuildMemberAdd(member) {
     await member.timeout(60 * 60 * 1000, 'S.A.I raid mode is enabled.').catch(() => {});
   }
 
+  const autoRoleId = guildData.config.autoRoleId || guildData.config.verifiedRoleId;
+  if (autoRoleId) {
+    await member.roles.add(autoRoleId, 'S.A.I automatic join role.').catch(() => {});
+  }
+
   const invite = await detectInvite(member.guild, guildData);
   const welcomeChannel = await member.guild.channels
     .fetch(guildData.config.welcomeChannelId)
     .catch(() => null);
 
-  if (welcomeChannel?.isTextBased()) {
+  if (typeof welcomeChannel?.isTextBased === 'function' && welcomeChannel.isTextBased()) {
+    const memberNumber = member.guild.memberCount || guildData.analytics.joins;
+    const inviteText = invite
+      ? `${invite.inviterTag} with \`${invite.code}\` (${invite.joins} total invite${invite.joins === 1 ? '' : 's'})`
+      : 'Unknown invite';
     await welcomeChannel.send({
       content: `Welcome ${member}!`,
       embeds: [
         new EmbedBuilder()
           .setColor(0x57f287)
-          .setTitle('Welcome to the server')
-          .setDescription(guildData.config.rulesText || 'Read the rules, then press the button below to verify.')
-          .addFields({ name: 'Invited by', value: invite || 'Unknown', inline: true }),
+          .setTitle(`Welcome, ${member.user.username}`)
+          .setDescription(
+            guildData.config.rulesText
+              || 'We are happy you made it here. Get comfortable, say hi when you are ready, and enjoy the server.',
+          )
+          .setThumbnail(member.displayAvatarURL({ size: 128 }))
+          .addFields(
+            { name: 'Member Number', value: `#${memberNumber}`, inline: true },
+            { name: 'Invited By', value: inviteText, inline: true },
+            { name: 'Getting Started', value: 'Check the channels, join a voice room, or open a ticket if you need help.' },
+          )
+          .setFooter({ text: `Joined ${member.guild.name}` })
+          .setTimestamp(),
       ],
-      components: [verifyRow()],
     }).catch(() => {});
   }
 
@@ -786,10 +806,10 @@ async function runServerTemplateSetup(interaction) {
   }
 
   const everyoneRole = interaction.guild.roles.everyone;
-  const verifiedRole = await getOrCreateRole(interaction.guild, {
-    name: 'Verified',
+  const memberRole = await getOrCreateRole(interaction.guild, {
+    name: 'Member',
     color: 0x57f287,
-    reason: 'S.A.I server template verified role.',
+    reason: 'S.A.I server template auto member role.',
   });
   const staffRole = await getOrCreateRole(interaction.guild, {
     name: 'Staff',
@@ -799,19 +819,23 @@ async function runServerTemplateSetup(interaction) {
 
   const categoryInfo = await getOrCreateCategory(interaction.guild, 'info・🌸', [
     denySend(everyoneRole.id),
-    allowRead(verifiedRole.id),
+    allowRead(memberRole.id),
   ]);
   const categoryChat = await getOrCreateCategory(interaction.guild, 'chat・🌐', [
     denyView(everyoneRole.id),
-    allowReadWrite(verifiedRole.id),
+    allowReadWrite(memberRole.id),
   ]);
   const categoryVoice = await getOrCreateCategory(interaction.guild, 'voice・🎧', [
     denyView(everyoneRole.id),
-    allowVoice(verifiedRole.id),
+    allowVoice(memberRole.id),
+  ]);
+  const categoryBoosterVoice = await getOrCreateCategory(interaction.guild, 'booster perks・💎', [
+    denyView(everyoneRole.id),
+    allowVoice(memberRole.id),
   ]);
   const categorySupport = await getOrCreateCategory(interaction.guild, 'support・🛟', [
     denyView(everyoneRole.id),
-    allowReadWrite(verifiedRole.id),
+    allowReadWrite(memberRole.id),
     allowReadWrite(staffRole.id),
   ]);
   const categoryStats = await getOrCreateCategory(interaction.guild, 'server・📊', [
@@ -836,7 +860,7 @@ async function runServerTemplateSetup(interaction) {
     allowReadOnly(everyoneRole.id),
   ]);
   const announcements = await getOrCreateTextChannel(interaction.guild, 'announcements', categoryInfo.id, [
-    allowRead(verifiedRole.id),
+    allowRead(memberRole.id),
     denySend(everyoneRole.id),
   ]);
 
@@ -857,7 +881,7 @@ async function runServerTemplateSetup(interaction) {
     await createRoom.setName('➕ Create a Room').catch(() => {});
     await createRoom.permissionOverwrites.set([
       denyView(everyoneRole.id),
-      allowVoice(verifiedRole.id),
+      allowVoice(memberRole.id),
     ]).catch(() => {});
   }
 
@@ -865,10 +889,9 @@ async function runServerTemplateSetup(interaction) {
     embeds: [
       new EmbedBuilder()
         .setColor(0x57f287)
-        .setTitle('Welcome & Rules')
-        .setDescription('Welcome in. Read the rules, then press the button below to unlock the server.'),
+        .setTitle('Welcome')
+        .setDescription('Welcome in. We are happy you made it here. Say hi when you are ready and enjoy the server.'),
     ],
-    components: [verifyRow()],
   }).catch(() => {});
   await rules.send({
     embeds: [
@@ -891,8 +914,11 @@ async function runServerTemplateSetup(interaction) {
 
   await updateGuildData(interaction.guildId, (guildData) => {
     guildData.config.welcomeChannelId = welcome.id;
-    guildData.config.verifiedRoleId = verifiedRole.id;
-    guildData.config.rulesText = 'Read the rules, then press Accept Rules to unlock the server.';
+    guildData.config.autoRoleId = memberRole.id;
+    guildData.config.verifiedRoleId = memberRole.id;
+    guildData.config.rulesText = 'We are happy you made it here. Get comfortable, say hi when you are ready, and enjoy the server.';
+    guildData.config.normalVoiceCategoryId = categoryVoice.id;
+    guildData.config.boosterVoiceCategoryId = categoryBoosterVoice.id;
     guildData.config.ticketCategoryId = categorySupport.id;
     guildData.config.supportRoleId = staffRole.id;
     guildData.config.logChannelId = logs.id;
@@ -908,8 +934,9 @@ async function runServerTemplateSetup(interaction) {
 
   await interaction.editReply([
     'Server template created.',
-    `Roles: ${verifiedRole}, ${staffRole}`,
+    `Roles: ${memberRole}, ${staffRole}`,
     `Main channels: ${welcome}, ${rules}, ${roles}, ${announcements}, ${general}, ${botCommands}, ${media}, ${tickets}, ${suggestions}, ${logs}`,
+    `Voice categories: normal rooms in ${categoryVoice}, booster rooms in ${categoryBoosterVoice}`,
     createRoom ? `Join-to-create renamed: ${createRoom}` : 'Join-to-create channel was not found from .env, so rename it manually to ➕ Create a Room.',
   ].join('\n'));
   return true;
@@ -924,18 +951,37 @@ async function runSetup(interaction) {
 
   if (sub === 'welcome') {
     const channel = interaction.options.getChannel('channel', true);
-    const role = interaction.options.getRole('verified_role', true);
-    const rules = interaction.options.getString('rules') || null;
+    const role = interaction.options.getRole('auto_role', true);
+    const message = interaction.options.getString('message') || null;
     await updateGuildData(interaction.guildId, (guildData) => {
       guildData.config.welcomeChannelId = channel.id;
+      guildData.config.autoRoleId = role.id;
       guildData.config.verifiedRoleId = role.id;
-      guildData.config.rulesText = rules;
+      guildData.config.rulesText = message;
     });
     await channel.send({
-      embeds: [panelEmbed('Welcome & Rules', rules || 'Read the rules, then verify to unlock the server.')],
-      components: [verifyRow()],
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x57f287)
+          .setTitle('Welcome System Enabled')
+          .setDescription(message || 'New members will receive a warm welcome here and get the auto role when they join.')
+          .addFields({ name: 'Auto Role', value: `${role}`, inline: true }),
+      ],
     });
-    return interaction.reply({ content: 'Welcome/rules flow is set up.', ephemeral: true });
+    return interaction.reply({ content: `Welcome messages will go to ${channel}. New members will automatically get ${role}.`, ephemeral: true });
+  }
+
+  if (sub === 'voice-categories') {
+    const normal = interaction.options.getChannel('normal', true);
+    const booster = interaction.options.getChannel('booster', true);
+    await updateGuildData(interaction.guildId, (guildData) => {
+      guildData.config.normalVoiceCategoryId = normal.id;
+      guildData.config.boosterVoiceCategoryId = booster.id;
+    });
+    return interaction.reply({
+      content: `Normal Garden rooms will be created under ${normal}. Booster perk rooms will be created under ${booster}.`,
+      ephemeral: true,
+    });
   }
 
   if (sub === 'roles') {
@@ -1002,9 +1048,11 @@ async function runSetup(interaction) {
   if (sub === 'booster') {
     const role = interaction.options.getRole('role');
     const channel = interaction.options.getChannel('channel');
+    const category = interaction.options.getChannel('category');
     await updateGuildData(interaction.guildId, (guildData) => {
       guildData.config.boosterRoleId = role?.id || null;
       guildData.config.boosterChannelId = channel?.id || null;
+      guildData.config.boosterVoiceCategoryId = category?.id || guildData.config.boosterVoiceCategoryId || null;
     });
     return interaction.reply({ content: 'Booster rewards are configured.', ephemeral: true });
   }
@@ -1642,34 +1690,6 @@ async function runRole(interaction) {
   return true;
 }
 
-async function runVerification(interaction) {
-  if (interaction.options.getSubcommand() !== 'create') return false;
-  const channel = interaction.options.getChannel('channel', true);
-  const role = interaction.options.getRole('role', true);
-
-  await updateGuildData(interaction.guildId, (guildData) => {
-    guildData.config.welcomeChannelId = channel.id;
-    guildData.config.verifiedRoleId = role.id;
-    guildData.config.rulesText = 'Click the verification button to unlock the server.';
-  });
-
-  await channel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(0x57f287)
-        .setTitle('Server Verification')
-        .setDescription('Click the button below to verify your account and unlock the rest of the server.')
-        .addFields(
-          { name: 'Before You Verify', value: 'Please read the rules and respect the community.' },
-          { name: 'Access', value: `Verification gives you the ${role} role.` },
-        ),
-    ],
-    components: [verifyRow()],
-  });
-  await interaction.reply({ content: `Verification panel posted in ${channel}.`, ephemeral: true });
-  return true;
-}
-
 async function runBotProfile(interaction) {
   if (interaction.options.getSubcommand() !== 'profile') return false;
   const username = interaction.options.getString('username');
@@ -1814,18 +1834,6 @@ async function handleLordNicknameCommand(message) {
     'Lord Nickname Command',
     `${message.author.tag} renamed ${target.user.tag} to **${parsed.nickname}**.`,
   );
-  return true;
-}
-
-async function verifyMember(interaction) {
-  const guildData = await getGuildData(interaction.guildId);
-  const roleId = guildData.config.verifiedRoleId;
-  if (!roleId) {
-    await interaction.reply({ content: 'No verified role is configured.', ephemeral: true });
-    return true;
-  }
-  await interaction.member.roles.add(roleId, 'S.A.I welcome verification.');
-  await interaction.reply({ content: 'You are verified.', ephemeral: true });
   return true;
 }
 
@@ -2329,7 +2337,12 @@ async function detectInvite(guild, guildData) {
 
   guildData.invites[usedInvite.inviter.id] ||= { joins: 0 };
   guildData.invites[usedInvite.inviter.id].joins += 1;
-  return `${usedInvite.inviter.tag} (${usedInvite.code})`;
+  return {
+    inviterId: usedInvite.inviter.id,
+    inviterTag: usedInvite.inviter.tag,
+    code: usedInvite.code,
+    joins: guildData.invites[usedInvite.inviter.id].joins,
+  };
 }
 
 async function updateStatsChannels(guild) {
@@ -2602,10 +2615,6 @@ function getAutoModReason(message, guildData) {
     if (times.length >= 5) return 'Message spam';
   }
   return null;
-}
-
-function verifyRow() {
-  return new ActionRowBuilder().addComponents(button('feature:verify', 'Accept Rules', ButtonStyle.Success));
 }
 
 function panelEmbed(title, description) {

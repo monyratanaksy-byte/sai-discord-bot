@@ -72,8 +72,11 @@ export function createGuildData() {
   return {
     config: {
       welcomeChannelId: null,
+      autoRoleId: null,
       verifiedRoleId: null,
       rulesText: null,
+      normalVoiceCategoryId: null,
+      boosterVoiceCategoryId: null,
       ticketCategoryId: null,
       supportRoleId: null,
       logChannelId: null,

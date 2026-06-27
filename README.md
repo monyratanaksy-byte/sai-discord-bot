@@ -6,7 +6,7 @@ S.A.I is a Discord.js bot with:
 - Owner control panel buttons inside the new voice channel chat
 - Slash commands and `s!` prefix commands
 - User information and profile lookup commands
-- Server setup, verification, tickets, moderation, logging, roles, and utility tools
+- Server setup, auto roles, tickets, moderation, logging, roles, and utility tools
 - Safe Discord User Install utility commands that do not use AI, paid APIs, or external services
 
 ## Setup
@@ -136,11 +136,12 @@ Main guild slash commands:
 - `/admin status`
 - `/admin config`
 - `/setup template`
+- `/setup welcome`
+- `/setup voice-categories`
 - `/ticket panel`
 - `/mod warn`
 - `/poll create`
 - `/role give-everyone`
-- `/verification create`
 - `/bot profile`
 
 Global User Install utility commands include:
