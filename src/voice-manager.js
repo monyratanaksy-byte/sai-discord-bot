@@ -17,8 +17,10 @@ import { createTemporaryTextChannel } from './server-features.js';
 import { getGuildData, updateGuildData } from './storage.js';
 
 const temporaryRooms = new Map();
+const roomNameCooldowns = new Map();
 const roomEmojiPool = ['🌸', '☁️', '✨', '🌷', '🫧', '⭐', '🍓', '🌙', '🧸', '🎧'];
 const standardRoomPrefix = 'Garden';
+const roomNameCooldownMs = 90_000;
 const roomStyles = [
   { label: 'Cute', value: 'cute', emoji: '🌸', template: "{name}'s Garden" },
   { label: 'Chill', value: 'chill', emoji: '🌙', template: "{name}'s Lounge" },
@@ -149,40 +151,45 @@ export async function handleVoiceButton(interaction) {
     }
 
   if (interaction.customId === 'voice_lock') {
+    await interaction.deferReply({ ephemeral: true });
     await room.channel.permissionOverwrites.edit(interaction.guild.id, {
       Connect: false,
     });
-    await interaction.reply({ content: 'Room locked.', ephemeral: true });
+    await interaction.editReply('Room locked.');
     return;
   }
 
   if (interaction.customId === 'voice_unlock') {
+    await interaction.deferReply({ ephemeral: true });
     await room.channel.permissionOverwrites.edit(interaction.guild.id, {
       Connect: null,
     });
-    await interaction.reply({ content: 'Room unlocked.', ephemeral: true });
+    await interaction.editReply('Room unlocked.');
     return;
   }
 
   if (interaction.customId === 'voice_hide') {
+    await interaction.deferReply({ ephemeral: true });
     await room.channel.permissionOverwrites.edit(interaction.guild.id, {
       ViewChannel: false,
     });
-    await interaction.reply({ content: 'Room hidden.', ephemeral: true });
+    await interaction.editReply('Room hidden.');
     return;
   }
 
   if (interaction.customId === 'voice_show') {
+    await interaction.deferReply({ ephemeral: true });
     await room.channel.permissionOverwrites.edit(interaction.guild.id, {
       ViewChannel: null,
     });
-    await interaction.reply({ content: 'Room visible again.', ephemeral: true });
+    await interaction.editReply('Room visible again.');
     return;
   }
 
   if (interaction.customId === 'voice_delete') {
+    await interaction.deferReply({ ephemeral: true });
     temporaryRooms.delete(room.channel.id);
-    await interaction.reply({ content: 'Deleting your room.', ephemeral: true });
+    await interaction.editReply('Deleting your room.');
     await room.channel.delete('S.A.I room owner deleted the temporary room.');
     return;
   }
@@ -289,7 +296,16 @@ export async function handleVoiceSelect(interaction) {
 
       const owner = await interaction.guild.members.fetch(room.ownerId).catch(() => null);
       const name = buildStyledRoomName(style, owner?.displayName || interaction.member.displayName);
-      await room.channel.setName(name, 'S.A.I room owner changed the room style.');
+      const cooldown = getRoomNameCooldown(room.channel.id);
+      if (cooldown > 0) {
+        await finishVoiceSelect(interaction, `Room name changes are cooling down. Try again in ${cooldown} seconds.`);
+        return;
+      }
+
+      if (room.channel.name !== name) {
+        await room.channel.setName(name, 'S.A.I room owner changed the room style.');
+        markRoomNameChanged(room.channel.id);
+      }
       await finishVoiceSelect(interaction, `Room style changed to **${style.label}**: ${name}`);
       return;
     }
@@ -425,7 +441,16 @@ export async function handleVoiceModal(interaction) {
 
   if (modalAction === 'voice_rename_modal') {
     const name = interaction.fields.getTextInputValue('name').trim();
-    await room.channel.setName(name, 'S.A.I room owner renamed the room.');
+    const cooldown = getRoomNameCooldown(room.channel.id);
+    if (cooldown > 0) {
+      await interaction.editReply(`Room name changes are cooling down. Try again in ${cooldown} seconds.`);
+      return;
+    }
+
+    if (room.channel.name !== name) {
+      await room.channel.setName(name, 'S.A.I room owner renamed the room.');
+      markRoomNameChanged(room.channel.id);
+    }
     await interaction.editReply(`Room renamed to **${name}**.`);
     return;
   }
@@ -529,6 +554,21 @@ async function transferRoomOwnership(guildId, room, newOwnerId) {
 
 function buildStyledRoomName(style, displayName) {
   return `${style.emoji} ${style.template.replace('{name}', displayName)}`.slice(0, 100);
+}
+
+function getRoomNameCooldown(channelId) {
+  const readyAt = roomNameCooldowns.get(channelId) || 0;
+  const remaining = readyAt - Date.now();
+  if (remaining <= 0) {
+    roomNameCooldowns.delete(channelId);
+    return 0;
+  }
+
+  return Math.ceil(remaining / 1000);
+}
+
+function markRoomNameChanged(channelId) {
+  roomNameCooldowns.set(channelId, Date.now() + roomNameCooldownMs);
 }
 
 function getRoomAccessList(guildData, listType, ownerId) {
