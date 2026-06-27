@@ -21,13 +21,6 @@ const roomNameCooldowns = new Map();
 const roomEmojiPool = ['🌸', '☁️', '✨', '🌷', '🫧', '⭐', '🍓', '🌙', '🧸', '🎧'];
 const standardRoomPrefix = 'Garden';
 const roomNameCooldownMs = 90_000;
-const roomStyles = [
-  { label: 'Cute', value: 'cute', emoji: '🌸', template: "{name}'s Garden" },
-  { label: 'Chill', value: 'chill', emoji: '🌙', template: "{name}'s Lounge" },
-  { label: 'Gaming', value: 'gaming', emoji: '🎮', template: "{name}'s Party" },
-  { label: 'Music', value: 'music', emoji: '🎧', template: "{name}'s Studio" },
-  { label: 'Private', value: 'private', emoji: '🔒', template: "{name}'s Room" },
-];
 
 export const voiceCommands = [
   new SlashCommandBuilder()
@@ -236,11 +229,6 @@ export async function handleVoiceButton(interaction) {
     return;
   }
 
-  if (interaction.customId === 'voice_style') {
-    await showStylePicker(interaction, room);
-    return;
-  }
-
   if (interaction.customId === 'voice_invite') {
     await sendRoomInvite(interaction, room);
     return;
@@ -284,29 +272,6 @@ export async function handleVoiceSelect(interaction) {
 
     if (!(await isRoomOwner(interaction, room))) {
       await finishVoiceSelect(interaction, 'Only the room owner can update this room.');
-      return;
-    }
-
-    if (selectAction === 'voice_style_select') {
-      const style = roomStyles.find((item) => item.value === interaction.values?.[0]);
-      if (!style) {
-        await finishVoiceSelect(interaction, 'That room style is not available.');
-        return;
-      }
-
-      const owner = await interaction.guild.members.fetch(room.ownerId).catch(() => null);
-      const name = buildStyledRoomName(style, owner?.displayName || interaction.member.displayName);
-      const cooldown = getRoomNameCooldown(room.channel.id);
-      if (cooldown > 0) {
-        await finishVoiceSelect(interaction, `Room name changes are cooling down. Try again in ${cooldown} seconds.`);
-        return;
-      }
-
-      if (room.channel.name !== name) {
-        await room.channel.setName(name, 'S.A.I room owner changed the room style.');
-        markRoomNameChanged(room.channel.id);
-      }
-      await finishVoiceSelect(interaction, `Room style changed to **${style.label}**: ${name}`);
       return;
     }
 
@@ -552,10 +517,6 @@ async function transferRoomOwnership(guildId, room, newOwnerId) {
   });
 }
 
-function buildStyledRoomName(style, displayName) {
-  return `${style.emoji} ${style.template.replace('{name}', displayName)}`.slice(0, 100);
-}
-
 function getRoomNameCooldown(channelId) {
   const readyAt = roomNameCooldowns.get(channelId) || 0;
   const remaining = readyAt - Date.now();
@@ -787,26 +748,25 @@ async function sendControlPanel(channel, ownerId) {
 
   const rows = [
     new ActionRowBuilder().addComponents(
-      button('voice_lock', 'Lock', ButtonStyle.Secondary),
-      button('voice_unlock', 'Unlock', ButtonStyle.Secondary),
-      button('voice_hide', 'Hide', ButtonStyle.Secondary),
-      button('voice_show', 'Show', ButtonStyle.Secondary),
-    ),
-    new ActionRowBuilder().addComponents(
       button('voice_rename', 'Rename', ButtonStyle.Primary),
       button('voice_limit', 'Limit', ButtonStyle.Primary),
-      button('voice_style', 'Style', ButtonStyle.Primary),
-      button('voice_claim', 'Claim', ButtonStyle.Success),
-      button('voice_delete', 'Delete', ButtonStyle.Danger),
+      button('voice_lock', 'Lock', ButtonStyle.Secondary),
+      button('voice_unlock', 'Unlock', ButtonStyle.Secondary),
     ),
     new ActionRowBuilder().addComponents(
+      button('voice_hide', 'Hide', ButtonStyle.Secondary),
+      button('voice_show', 'Show', ButtonStyle.Secondary),
       button('voice_invite', 'Invite', ButtonStyle.Success),
-      button('voice_transfer', 'Transfer', ButtonStyle.Secondary),
+      button('voice_claim', 'Claim', ButtonStyle.Success),
     ),
     new ActionRowBuilder().addComponents(
-      button('voice_permit', 'Allow User', ButtonStyle.Success),
-      button('voice_kick', 'Kick User', ButtonStyle.Danger),
-      button('voice_deny', 'Deny User', ButtonStyle.Danger),
+      button('voice_permit', 'Allow', ButtonStyle.Success),
+      button('voice_kick', 'Kick', ButtonStyle.Danger),
+      button('voice_deny', 'Deny', ButtonStyle.Danger),
+    ),
+    new ActionRowBuilder().addComponents(
+      button('voice_transfer', 'Transfer Owner', ButtonStyle.Secondary),
+      button('voice_delete', 'Delete Room', ButtonStyle.Danger),
     ),
   ];
 
@@ -817,25 +777,6 @@ async function sendControlPanel(channel, ownerId) {
 
 function button(customId, label, style) {
   return new ButtonBuilder().setCustomId(customId).setLabel(label).setStyle(style);
-}
-
-async function showStylePicker(interaction, room) {
-  const select = new StringSelectMenuBuilder()
-    .setCustomId(`voice_style_select:${room.channel.id}`)
-    .setPlaceholder('Choose a room style')
-    .addOptions(
-      roomStyles.map((style) => ({
-        label: style.label,
-        value: style.value,
-        emoji: style.emoji,
-        description: style.template.replace('{name}', interaction.member.displayName).slice(0, 100),
-      })),
-    );
-
-  await sendTemporaryPicker(interaction, {
-    content: 'Pick a style for this voice room.',
-    components: [new ActionRowBuilder().addComponents(select)],
-  });
 }
 
 async function sendRoomInvite(interaction, room) {

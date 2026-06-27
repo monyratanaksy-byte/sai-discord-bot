@@ -85,8 +85,8 @@ Main setup commands:
 Voice room controls:
 Server boosters get a saved personal voice room when they join the join-to-create
 channel. Their room stays when empty, reopens for them next time, and includes
-buttons for room style, public invite, owner transfer, allow user, kick user,
-and deny user.
+buttons for rename, limit, lock, unlock, hide, show, public invite, owner
+transfer, allow user, kick user, deny user, and delete.
 
 Non-boosters get simple temporary rooms named Garden 1, Garden 2, etc. They can
 create and use the room, but they do not get the owner control panel.
