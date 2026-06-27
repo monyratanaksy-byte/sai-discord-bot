@@ -266,26 +266,26 @@ export async function handleVoiceSelect(interaction) {
     const room = await getRoomById(interaction.guild, channelId);
 
     if (!room) {
-      await interaction.editReply('That voice room no longer exists.');
+      await finishVoiceSelect(interaction, 'That voice room no longer exists.');
       return;
     }
 
     if (!(await isRoomOwner(interaction, room))) {
-      await interaction.editReply('Only the room owner can update this room.');
+      await finishVoiceSelect(interaction, 'Only the room owner can update this room.');
       return;
     }
 
     if (selectAction === 'voice_style_select') {
       const style = roomStyles.find((item) => item.value === interaction.values?.[0]);
       if (!style) {
-        await interaction.editReply('That room style is not available.');
+        await finishVoiceSelect(interaction, 'That room style is not available.');
         return;
       }
 
       const owner = await interaction.guild.members.fetch(room.ownerId).catch(() => null);
       const name = buildStyledRoomName(style, owner?.displayName || interaction.member.displayName);
       await room.channel.setName(name, 'S.A.I room owner changed the room style.');
-      await interaction.editReply(`Room style changed to **${style.label}**: ${name}`);
+      await finishVoiceSelect(interaction, `Room style changed to **${style.label}**: ${name}`);
       return;
     }
 
@@ -295,49 +295,57 @@ export async function handleVoiceSelect(interaction) {
       : null;
 
     if (!member) {
-      await interaction.editReply('Could not find that user.');
+      await finishVoiceSelect(interaction, 'Could not find that user.');
       return;
     }
 
     if (selectAction === 'voice_permit_select') {
       await permitMember(room, member);
-      await interaction.editReply(`${member} can now see and join this room.`);
+      await finishVoiceSelect(interaction, `${member} can now see and join this room.`);
       return;
     }
 
     if (selectAction === 'voice_kick_select') {
       if (member.voice.channelId !== room.channel.id) {
-        await interaction.editReply(`${member} is no longer in this room.`);
+        await finishVoiceSelect(interaction, `${member} is no longer in this room.`);
         return;
       }
 
       await member.voice.disconnect('S.A.I room owner kicked this member from the temporary room.');
-      await interaction.editReply(`${member} was kicked from this room.`);
+      await finishVoiceSelect(interaction, `${member} was kicked from this room.`);
       return;
     }
 
     if (selectAction === 'voice_transfer_select') {
       if (!room.channel.members.has(member.id)) {
-        await interaction.editReply(`${member} needs to be inside this room before ownership can be transferred.`);
+        await finishVoiceSelect(interaction, `${member} needs to be inside this room before ownership can be transferred.`);
         return;
       }
 
       await transferRoomOwnership(interaction.guild.id, room, member.id);
-      await interaction.editReply(`${member} now owns this room.`);
+      await finishVoiceSelect(interaction, `${member} now owns this room.`);
       return;
     }
 
     if (selectAction === 'voice_deny_select') {
       await denyMember(room, member);
-      await interaction.editReply(`${member} can no longer join this room.`);
+      await finishVoiceSelect(interaction, `${member} can no longer join this room.`);
       return;
     }
 
-    await interaction.editReply('That voice control is not available anymore.');
+    await finishVoiceSelect(interaction, 'That voice control is not available anymore.');
   } catch (error) {
     console.error('Voice select interaction failed:', error);
-    await interaction.editReply('I could not apply that room change. Check that S.A.I has Manage Channels and Move Members permissions.').catch(() => {});
+    await finishVoiceSelect(interaction, 'I could not apply that room change. Check that S.A.I has Manage Channels and Move Members permissions.').catch(() => {});
   }
+}
+
+async function finishVoiceSelect(interaction, content) {
+  await interaction.editReply({
+    content,
+    components: [],
+    allowedMentions: { parse: [] },
+  });
 }
 
 export async function runVoiceSlashCommand(interaction) {
