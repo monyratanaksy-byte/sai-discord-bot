@@ -259,101 +259,84 @@ export async function handleVoiceButton(interaction) {
 }
 
 export async function handleVoiceSelect(interaction) {
-  const [selectAction, channelId] = interaction.customId.split(':');
-  const room = await getRoomById(interaction.guild, channelId);
+  await interaction.deferReply({ ephemeral: true });
 
-  if (!room) {
-    await interaction.reply({
-      content: 'That voice room no longer exists.',
-      ephemeral: true,
-    });
-    return;
-  }
+  try {
+    const [selectAction, channelId] = interaction.customId.split(':');
+    const room = await getRoomById(interaction.guild, channelId);
 
-  if (!(await isRoomOwner(interaction, room))) {
-    await interaction.reply({
-      content: 'Only the room owner can update this room.',
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (selectAction === 'voice_style_select') {
-    const style = roomStyles.find((item) => item.value === interaction.values?.[0]);
-    if (!style) {
-      await interaction.reply({ content: 'That room style is not available.', ephemeral: true });
+    if (!room) {
+      await interaction.editReply('That voice room no longer exists.');
       return;
     }
 
-    const owner = await interaction.guild.members.fetch(room.ownerId).catch(() => null);
-    const name = buildStyledRoomName(style, owner?.displayName || interaction.member.displayName);
-    await room.channel.setName(name, 'S.A.I room owner changed the room style.');
-    await interaction.reply({ content: `Room style changed to **${style.label}**: ${name}`, ephemeral: true });
-    return;
-  }
-
-  const selectedUserId = interaction.values?.[0];
-  const member = selectedUserId
-    ? await interaction.guild.members.fetch(selectedUserId).catch(() => null)
-    : null;
-
-  if (!member) {
-    await interaction.reply({
-      content: 'Could not find that user.',
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (selectAction === 'voice_permit_select') {
-    await permitMember(room, member);
-    await interaction.reply({
-      content: `${member} can now see and join this room.`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (selectAction === 'voice_kick_select') {
-    if (member.voice.channelId !== room.channel.id) {
-      await interaction.reply({
-        content: `${member} is no longer in this room.`,
-        ephemeral: true,
-      });
+    if (!(await isRoomOwner(interaction, room))) {
+      await interaction.editReply('Only the room owner can update this room.');
       return;
     }
 
-    await member.voice.disconnect('S.A.I room owner kicked this member from the temporary room.');
-    await interaction.reply({
-      content: `${member} was kicked from this room.`,
-      ephemeral: true,
-    });
-    return;
-  }
+    if (selectAction === 'voice_style_select') {
+      const style = roomStyles.find((item) => item.value === interaction.values?.[0]);
+      if (!style) {
+        await interaction.editReply('That room style is not available.');
+        return;
+      }
 
-  if (selectAction === 'voice_transfer_select') {
-    if (!room.channel.members.has(member.id)) {
-      await interaction.reply({
-        content: `${member} needs to be inside this room before ownership can be transferred.`,
-        ephemeral: true,
-      });
+      const owner = await interaction.guild.members.fetch(room.ownerId).catch(() => null);
+      const name = buildStyledRoomName(style, owner?.displayName || interaction.member.displayName);
+      await room.channel.setName(name, 'S.A.I room owner changed the room style.');
+      await interaction.editReply(`Room style changed to **${style.label}**: ${name}`);
       return;
     }
 
-    await transferRoomOwnership(interaction.guild.id, room, member.id);
-    await interaction.reply({
-      content: `${member} now owns this room.`,
-      ephemeral: true,
-    });
-    return;
-  }
+    const selectedUserId = interaction.values?.[0];
+    const member = selectedUserId
+      ? await interaction.guild.members.fetch(selectedUserId).catch(() => null)
+      : null;
 
-  if (selectAction === 'voice_deny_select') {
-    await denyMember(room, member);
-    await interaction.reply({
-      content: `${member} can no longer join this room.`,
-      ephemeral: true,
-    });
+    if (!member) {
+      await interaction.editReply('Could not find that user.');
+      return;
+    }
+
+    if (selectAction === 'voice_permit_select') {
+      await permitMember(room, member);
+      await interaction.editReply(`${member} can now see and join this room.`);
+      return;
+    }
+
+    if (selectAction === 'voice_kick_select') {
+      if (member.voice.channelId !== room.channel.id) {
+        await interaction.editReply(`${member} is no longer in this room.`);
+        return;
+      }
+
+      await member.voice.disconnect('S.A.I room owner kicked this member from the temporary room.');
+      await interaction.editReply(`${member} was kicked from this room.`);
+      return;
+    }
+
+    if (selectAction === 'voice_transfer_select') {
+      if (!room.channel.members.has(member.id)) {
+        await interaction.editReply(`${member} needs to be inside this room before ownership can be transferred.`);
+        return;
+      }
+
+      await transferRoomOwnership(interaction.guild.id, room, member.id);
+      await interaction.editReply(`${member} now owns this room.`);
+      return;
+    }
+
+    if (selectAction === 'voice_deny_select') {
+      await denyMember(room, member);
+      await interaction.editReply(`${member} can no longer join this room.`);
+      return;
+    }
+
+    await interaction.editReply('That voice control is not available anymore.');
+  } catch (error) {
+    console.error('Voice select interaction failed:', error);
+    await interaction.editReply('I could not apply that room change. Check that S.A.I has Manage Channels and Move Members permissions.').catch(() => {});
   }
 }
 
