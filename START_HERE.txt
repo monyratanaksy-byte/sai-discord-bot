@@ -83,8 +83,13 @@ Main setup commands:
 /shop remove-role
 
 Voice room controls:
-New temporary voice rooms include buttons for room style, public invite, owner
-transfer, allow user, kick user, and deny user.
+Server boosters get a saved personal voice room when they join the join-to-create
+channel. Their room stays when empty, reopens for them next time, and includes
+buttons for room style, public invite, owner transfer, allow user, kick user,
+and deny user.
+
+Non-boosters get simple temporary rooms named Garden 1, Garden 2, etc. They can
+create and use the room, but they do not get the owner control panel.
 
 Persistent room access:
 Use /roomtrust add user:@User to always allow someone into your future rooms.

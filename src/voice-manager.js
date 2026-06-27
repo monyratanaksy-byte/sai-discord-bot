@@ -18,6 +18,7 @@ import { getGuildData, updateGuildData } from './storage.js';
 
 const temporaryRooms = new Map();
 const roomEmojiPool = ['🌸', '☁️', '✨', '🌷', '🫧', '⭐', '🍓', '🌙', '🧸', '🎧'];
+const standardRoomPrefix = 'Garden';
 const roomStyles = [
   { label: 'Cute', value: 'cute', emoji: '🌸', template: "{name}'s Garden" },
   { label: 'Chill', value: 'chill', emoji: '🌙', template: "{name}'s Lounge" },
@@ -67,7 +68,7 @@ export async function handleVoiceStateUpdate(oldState, newState) {
     newState.channelId === config.joinToCreateChannelId &&
     newState.member
   ) {
-    await createTemporaryRoom(newState);
+    await handleJoinToCreate(newState);
   }
 
   if (
@@ -106,14 +107,19 @@ export async function handleVoiceStateUpdate(oldState, newState) {
     oldState.channel?.members.size === 0
   ) {
     const room = temporaryRooms.get(oldState.channelId);
+    if (room?.textChannelId && !room.isBoosterRoom) {
+      const textChannel = await oldState.guild.channels.fetch(room.textChannelId).catch(() => null);
+      await textChannel?.delete('S.A.I temporary voice room text channel is empty.').catch(() => {});
+    }
+
+    if (room?.isBoosterRoom) {
+      return;
+    }
+
     temporaryRooms.delete(oldState.channelId);
     await updateGuildData(oldState.guild.id, (guildData) => {
       delete guildData.voiceRooms[oldState.channelId];
     });
-    if (room?.textChannelId) {
-      const textChannel = await oldState.guild.channels.fetch(room.textChannelId).catch(() => null);
-      await textChannel?.delete('S.A.I temporary voice room text channel is empty.').catch(() => {});
-    }
     await oldState.channel.delete('S.A.I temporary voice room is empty.').catch(() => {});
   }
 }
@@ -559,9 +565,108 @@ async function getInviteChannel(guild) {
   ) || null;
 }
 
-async function createTemporaryRoom(newState) {
+function isBooster(member, guildData) {
+  if (member?.premiumSince || member?.premiumSinceTimestamp) return true;
+  const boosterRoleId = guildData.config?.boosterRoleId;
+  return Boolean(boosterRoleId && member?.roles?.cache?.has(boosterRoleId));
+}
+
+async function getBoosterRoomForOwner(guild, ownerId, guildData) {
+  const entry = Object.values(guildData.voiceRooms || {}).find((room) =>
+    room?.isBoosterRoom && room.ownerId === ownerId,
+  );
+  if (!entry?.channelId) return null;
+
+  const channel = await guild.channels.fetch(entry.channelId).catch(() => null);
+  if (!channel) {
+    await updateGuildData(guild.id, (data) => {
+      delete data.voiceRooms[entry.channelId];
+    });
+    return null;
+  }
+
+  const room = {
+    channel,
+    ownerId: entry.ownerId,
+    createdAt: entry.createdAt,
+    textChannelId: entry.textChannelId,
+    isBoosterRoom: true,
+  };
+  temporaryRooms.set(channel.id, room);
+  return room;
+}
+
+function nextGardenRoomName(guild) {
+  const usedNumbers = new Set();
+  for (const channel of guild.channels.cache.values()) {
+    const match = channel.name.match(/^Garden (\d+)$/i);
+    if (match) usedNumbers.add(Number(match[1]));
+  }
+
+  let number = 1;
+  while (usedNumbers.has(number)) number += 1;
+  return `${standardRoomPrefix} ${number}`;
+}
+
+async function handleJoinToCreate(newState) {
   const { guild, member, channel: joinChannel } = newState;
   const guildData = await getGuildData(guild.id);
+
+  if (isBooster(member, guildData)) {
+    const existingRoom = await getBoosterRoomForOwner(guild, member.id, guildData);
+    if (existingRoom) {
+      await member.voice.setChannel(existingRoom.channel, 'S.A.I moved booster to their permanent room.');
+      return;
+    }
+
+    await createBoosterRoom(newState, guildData);
+    return;
+  }
+
+  await createStandardGardenRoom(newState);
+}
+
+async function createStandardGardenRoom(newState) {
+  const { guild, member, channel: joinChannel } = newState;
+  const room = await guild.channels.create({
+    name: nextGardenRoomName(guild),
+    type: ChannelType.GuildVoice,
+    parent: joinChannel?.parentId || null,
+    permissionOverwrites: [
+      {
+        id: guild.id,
+        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect],
+      },
+      {
+        id: member.id,
+        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect],
+      },
+    ],
+    reason: 'S.A.I standard join-to-create voice room.',
+  });
+
+  temporaryRooms.set(room.id, {
+    channel: room,
+    ownerId: member.id,
+    createdAt: Date.now(),
+    textChannelId: null,
+    isBoosterRoom: false,
+  });
+  await updateGuildData(guild.id, (guildData) => {
+    guildData.voiceRooms[room.id] = {
+      channelId: room.id,
+      ownerId: member.id,
+      createdAt: Date.now(),
+      textChannelId: null,
+      isBoosterRoom: false,
+    };
+  });
+
+  await member.voice.setChannel(room, 'S.A.I moved member to standard temporary room.');
+}
+
+async function createBoosterRoom(newState, guildData) {
+  const { guild, member, channel: joinChannel } = newState;
   const trustedIds = getRoomAccessList(guildData, 'trusted', member.id);
   const bannedIds = getRoomAccessList(guildData, 'banned', member.id);
   const roomEmoji = roomEmojiPool[Math.floor(Math.random() * roomEmojiPool.length)];
@@ -598,13 +703,15 @@ async function createTemporaryRoom(newState) {
           deny: [PermissionFlagsBits.Connect],
         })),
     ],
-    reason: 'S.A.I join-to-create voice room.',
+    reason: 'S.A.I booster permanent voice room.',
   });
 
   temporaryRooms.set(room.id, {
     channel: room,
     ownerId: member.id,
     createdAt: Date.now(),
+    textChannelId: null,
+    isBoosterRoom: true,
   });
   await updateGuildData(guild.id, (guildData) => {
     guildData.voiceRooms[room.id] = {
@@ -612,10 +719,11 @@ async function createTemporaryRoom(newState) {
       ownerId: member.id,
       createdAt: Date.now(),
       textChannelId: null,
+      isBoosterRoom: true,
     };
   });
 
-  await member.voice.setChannel(room, 'S.A.I moved member to temporary room.');
+  await member.voice.setChannel(room, 'S.A.I moved booster to permanent room.');
   const textChannel = await createTemporaryTextChannel(room, member.id).catch((error) => {
     console.error('Temporary text channel creation failed:', error);
     return null;
@@ -846,6 +954,7 @@ async function getRoomById(guild, channelId) {
     ownerId: saved.ownerId,
     createdAt: saved.createdAt,
     textChannelId: saved.textChannelId,
+    isBoosterRoom: Boolean(saved.isBoosterRoom),
   };
   temporaryRooms.set(channelId, room);
   return room;
