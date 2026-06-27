@@ -742,7 +742,7 @@ async function sendControlPanel(channel, ownerId) {
     .setTitle('S.A.I Voice Control Panel')
     .setDescription(
       [
-        `<@${ownerId}> owns this temporary voice room.`,
+        `<@${ownerId}> owns this voice room.`,
         'Use the buttons below to manage access, visibility, name, user limit, or deletion.',
       ].join('\n'),
     );
@@ -765,10 +765,7 @@ async function sendControlPanel(channel, ownerId) {
       button('voice_kick', 'Kick', ButtonStyle.Danger),
       button('voice_deny', 'Deny', ButtonStyle.Danger),
     ),
-    new ActionRowBuilder().addComponents(
-      button('voice_transfer', 'Transfer Owner', ButtonStyle.Secondary),
-      button('voice_delete', 'Delete Room', ButtonStyle.Danger),
-    ),
+    new ActionRowBuilder().addComponents(button('voice_delete', 'Delete Room', ButtonStyle.Danger)),
   ];
 
   if (typeof channel.send === 'function') {
