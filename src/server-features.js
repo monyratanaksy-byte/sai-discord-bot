@@ -65,6 +65,26 @@ export const featureCommands = [
     )
     .addSubcommand((sub) =>
       sub
+        .setName('welcome-off')
+        .setDescription('Disable welcome messages and automatic join role.'),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('verify')
+        .setDescription('Set up verification role, verify channel, and locked server permissions.')
+        .addChannelOption((option) =>
+          option
+            .setName('channel')
+            .setDescription('Channel where unverified users verify.')
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(true),
+        )
+        .addRoleOption((option) =>
+          option.setName('role').setDescription('Role users receive after verifying. Created if omitted.').setRequired(false),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
         .setName('voice-categories')
         .setDescription('Set where normal and booster join-to-create rooms are made.')
         .addChannelOption((option) =>
@@ -708,7 +728,7 @@ export async function handleFeatureGuildMemberAdd(member) {
     await member.timeout(60 * 60 * 1000, 'S.A.I raid mode is enabled.').catch(() => {});
   }
 
-  const autoRoleId = guildData.config.autoRoleId || guildData.config.verifiedRoleId;
+  const autoRoleId = guildData.config.autoRoleId;
   if (autoRoleId) {
     await member.roles.add(autoRoleId, 'S.A.I automatic join role.').catch(() => {});
   }
@@ -983,7 +1003,6 @@ async function runSetup(interaction) {
     await updateGuildData(interaction.guildId, (guildData) => {
       guildData.config.welcomeChannelId = channel.id;
       guildData.config.autoRoleId = role.id;
-      guildData.config.verifiedRoleId = role.id;
       guildData.config.rulesText = message;
     });
     await channel.send({
@@ -996,6 +1015,19 @@ async function runSetup(interaction) {
       ],
     });
     return interaction.reply({ content: `Welcome messages will go to ${channel}. New members will automatically get ${role}.`, ephemeral: true });
+  }
+
+  if (sub === 'welcome-off') {
+    await updateGuildData(interaction.guildId, (guildData) => {
+      guildData.config.welcomeChannelId = null;
+      guildData.config.autoRoleId = null;
+      guildData.config.rulesText = null;
+    });
+    return interaction.reply({ content: 'Welcome messages and automatic join role are disabled.', ephemeral: true });
+  }
+
+  if (sub === 'verify') {
+    return runSetupVerify(interaction);
   }
 
   if (sub === 'voice-categories') {
@@ -1093,6 +1125,127 @@ async function runSetup(interaction) {
   }
 
   return false;
+}
+
+async function runSetupVerify(interaction) {
+  const channel = interaction.options.getChannel('channel', true);
+  let role = interaction.options.getRole('role');
+
+  await interaction.deferReply({ ephemeral: true });
+
+  if (!role) {
+    role = await interaction.guild.roles.create({
+      name: 'Verified',
+      color: 0x57f287,
+      reason: 'S.A.I verification setup.',
+    });
+  }
+
+  await updateGuildData(interaction.guildId, (guildData) => {
+    guildData.config.verifyChannelId = channel.id;
+    guildData.config.verifiedRoleId = role.id;
+    guildData.config.autoRoleId = null;
+  });
+
+  const permissionResult = await applyVerifyPermissions(interaction.guild, channel, role);
+  const siteResult = await configureVerifySiteRole(interaction.guildId, role.id);
+  await sendVerifyPanel(channel, role);
+
+  const lines = [
+    `Verification is set up in ${channel}.`,
+    `Verified role: ${role}`,
+    `Permissions updated: ${permissionResult.updated}`,
+    permissionResult.failed ? `Permission failures: ${permissionResult.failed}` : null,
+    siteResult.ok ? 'Verify site synced with this server role.' : `Verify site sync failed: ${siteResult.error}`,
+  ].filter(Boolean);
+
+  return interaction.editReply(lines.join('\n'));
+}
+
+async function applyVerifyPermissions(guild, verifyChannel, verifiedRole) {
+  let updated = 0;
+  let failed = 0;
+  const everyoneId = guild.id;
+
+  for (const channel of guild.channels.cache.values()) {
+    try {
+      if (!channel.permissionOverwrites?.edit) continue;
+
+      if (channel.id === verifyChannel.id) {
+        await channel.permissionOverwrites.edit(everyoneId, {
+          ViewChannel: true,
+          SendMessages: false,
+          ReadMessageHistory: true,
+          Connect: false,
+        }, { reason: 'S.A.I verification channel setup.' });
+        await channel.permissionOverwrites.edit(verifiedRole.id, {
+          ViewChannel: false,
+        }, { reason: 'S.A.I hides verify channel from verified users.' });
+        updated += 1;
+        continue;
+      }
+
+      await channel.permissionOverwrites.edit(everyoneId, {
+        ViewChannel: false,
+      }, { reason: 'S.A.I locks server behind verification.' });
+      await channel.permissionOverwrites.edit(verifiedRole.id, {
+        ViewChannel: true,
+      }, { reason: 'S.A.I allows verified users to view server channels.' });
+      updated += 1;
+    } catch (error) {
+      failed += 1;
+      console.error(`Verify permission setup failed for channel ${channel.id}:`, error);
+    }
+  }
+
+  return { updated, failed };
+}
+
+async function configureVerifySiteRole(guildId, verifyRoleId) {
+  const verifySiteUrl = config.verifySiteUrl?.replace(/\/+$/, '');
+  if (!verifySiteUrl || !config.verifyApiSecret) {
+    return { ok: false, error: 'VERIFY_SITE_URL and VERIFY_API_SECRET must be set.' };
+  }
+
+  const response = await fetch(`${verifySiteUrl}/api/config-guild`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.verifyApiSecret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ guildId, verifyRoleId }),
+  }).catch((error) => ({ ok: false, status: 0, json: async () => ({ error: error.message }) }));
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok) return { ok: false, error: data.error || `HTTP ${response.status}` };
+  return { ok: true };
+}
+
+async function sendVerifyPanel(channel, verifiedRole) {
+  const verifySiteUrl = config.verifySiteUrl?.replace(/\/+$/, '');
+  const url = verifySiteUrl
+    ? `${verifySiteUrl}/verify?guild_id=${encodeURIComponent(channel.guild.id)}`
+    : null;
+
+  const embed = new EmbedBuilder()
+    .setColor(0x57f287)
+    .setTitle('Verify')
+    .setDescription('Verify with S.A.I to unlock access.')
+    .addFields({ name: 'Role', value: `${verifiedRole}`, inline: true });
+
+  const payload = { embeds: [embed], allowedMentions: { parse: [] } };
+  if (url) {
+    payload.components = [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('Verify')
+          .setStyle(ButtonStyle.Link)
+          .setURL(url),
+      ),
+    ];
+  }
+
+  await channel.send(payload);
 }
 
 async function runTestVerify(interaction) {

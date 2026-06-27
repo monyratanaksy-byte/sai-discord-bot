@@ -74,6 +74,7 @@ export function createGuildData() {
       welcomeChannelId: null,
       autoRoleId: null,
       verifiedRoleId: null,
+      verifyChannelId: null,
       rulesText: null,
       normalVoiceCategoryId: null,
       boosterVoiceCategoryId: null,
