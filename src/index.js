@@ -23,6 +23,7 @@ import {
 import {
   handleVoiceButton,
   handleVoiceModal,
+  handleVoiceSelect,
   handleVoiceStateUpdate,
 } from './voice-manager.js';
 import {
@@ -140,6 +141,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('voice_')) {
       await handleVoiceButton(interaction);
+      return;
+    }
+
+    if ((interaction.isStringSelectMenu() || interaction.isUserSelectMenu()) && interaction.customId.startsWith('voice_')) {
+      await handleVoiceSelect(interaction);
       return;
     }
 

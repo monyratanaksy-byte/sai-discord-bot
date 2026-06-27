@@ -6,8 +6,10 @@ import {
   EmbedBuilder,
   ModalBuilder,
   PermissionFlagsBits,
+  StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
+  UserSelectMenuBuilder,
 } from 'discord.js';
 import { config } from './config.js';
 import { createTemporaryTextChannel } from './server-features.js';
@@ -178,12 +180,85 @@ export async function handleVoiceButton(interaction) {
   }
 
   if (interaction.customId === 'voice_permit') {
-    await showUserAccessModal(interaction, room, 'permit');
+    await showUserPicker(interaction, room, 'permit');
+    return;
+  }
+
+  if (interaction.customId === 'voice_kick') {
+    await showKickPicker(interaction, room);
     return;
   }
 
   if (interaction.customId === 'voice_deny') {
-    await showUserAccessModal(interaction, room, 'deny');
+    await showUserPicker(interaction, room, 'deny');
+  }
+}
+
+export async function handleVoiceSelect(interaction) {
+  const [selectAction, channelId] = interaction.customId.split(':');
+  const room = await getRoomById(interaction.guild, channelId);
+
+  if (!room) {
+    await interaction.reply({
+      content: 'That voice room no longer exists.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (!(await isRoomOwner(interaction, room))) {
+    await interaction.reply({
+      content: 'Only the room owner can update this room.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const selectedUserId = interaction.values?.[0];
+  const member = selectedUserId
+    ? await interaction.guild.members.fetch(selectedUserId).catch(() => null)
+    : null;
+
+  if (!member) {
+    await interaction.reply({
+      content: 'Could not find that user.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (selectAction === 'voice_permit_select') {
+    await permitMember(room, member);
+    await interaction.reply({
+      content: `${member} can now see and join this room.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (selectAction === 'voice_kick_select') {
+    if (member.voice.channelId !== room.channel.id) {
+      await interaction.reply({
+        content: `${member} is no longer in this room.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    await member.voice.disconnect('S.A.I room owner kicked this member from the temporary room.');
+    await interaction.reply({
+      content: `${member} was kicked from this room.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (selectAction === 'voice_deny_select') {
+    await denyMember(room, member);
+    await interaction.reply({
+      content: `${member} can no longer join this room.`,
+      ephemeral: true,
+    });
   }
 }
 
@@ -250,10 +325,7 @@ export async function handleVoiceModal(interaction) {
     }
 
     if (modalAction === 'voice_permit_modal') {
-      await room.channel.permissionOverwrites.edit(member.id, {
-        ViewChannel: true,
-        Connect: true,
-      });
+      await permitMember(room, member);
       await interaction.reply({
         content: `${member} can now see and join this room.`,
         ephemeral: true,
@@ -261,18 +333,29 @@ export async function handleVoiceModal(interaction) {
       return;
     }
 
-    await room.channel.permissionOverwrites.edit(member.id, {
-      Connect: false,
-    });
-
-    if (member.voice.channelId === room.channel.id) {
-      await member.voice.disconnect('S.A.I room owner removed access.').catch(() => {});
-    }
+    await denyMember(room, member);
 
     await interaction.reply({
       content: `${member} can no longer join this room.`,
       ephemeral: true,
     });
+  }
+}
+
+async function permitMember(room, member) {
+  await room.channel.permissionOverwrites.edit(member.id, {
+    ViewChannel: true,
+    Connect: true,
+  });
+}
+
+async function denyMember(room, member) {
+  await room.channel.permissionOverwrites.edit(member.id, {
+    Connect: false,
+  });
+
+  if (member.voice.channelId === room.channel.id) {
+    await member.voice.disconnect('S.A.I room owner removed access.').catch(() => {});
   }
 }
 
@@ -357,6 +440,7 @@ async function sendControlPanel(channel, ownerId) {
     ),
     new ActionRowBuilder().addComponents(
       button('voice_permit', 'Allow User', ButtonStyle.Success),
+      button('voice_kick', 'Kick User', ButtonStyle.Danger),
       button('voice_deny', 'Deny User', ButtonStyle.Danger),
     ),
   ];
@@ -368,6 +452,53 @@ async function sendControlPanel(channel, ownerId) {
 
 function button(customId, label, style) {
   return new ButtonBuilder().setCustomId(customId).setLabel(label).setStyle(style);
+}
+
+async function showUserPicker(interaction, room, action) {
+  const select = new UserSelectMenuBuilder()
+    .setCustomId(`voice_${action}_select:${room.channel.id}`)
+    .setPlaceholder(action === 'permit' ? 'Choose a user to allow' : 'Choose a user to deny')
+    .setMinValues(1)
+    .setMaxValues(1);
+
+  await interaction.reply({
+    content: action === 'permit'
+      ? 'Pick the user you want to allow into this room.'
+      : 'Pick the user you want to block from this room.',
+    components: [new ActionRowBuilder().addComponents(select)],
+    ephemeral: true,
+  });
+}
+
+async function showKickPicker(interaction, room) {
+  const members = room.channel.members
+    .filter((member) => member.id !== interaction.user.id && !member.user.bot)
+    .first(25);
+
+  if (members.length === 0) {
+    await interaction.reply({
+      content: 'There is nobody else in this room to kick.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`voice_kick_select:${room.channel.id}`)
+    .setPlaceholder('Choose a user to kick')
+    .addOptions(
+      members.map((member) => ({
+        label: member.displayName.slice(0, 100),
+        description: member.user.tag.slice(0, 100),
+        value: member.id,
+      })),
+    );
+
+  await interaction.reply({
+    content: 'Pick the user you want to kick from this room.',
+    components: [new ActionRowBuilder().addComponents(select)],
+    ephemeral: true,
+  });
 }
 
 async function showUserAccessModal(interaction, room, action) {
