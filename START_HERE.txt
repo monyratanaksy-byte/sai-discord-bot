@@ -53,7 +53,7 @@ if [ -f /home/container/package.json ]; then /usr/local/bin/npm install; fi; /us
 
 Expected healthy console output:
 S.A.I is online as S.A.I#2790
-Registered 33 slash commands for guild 1481641949651013765.
+Registered 34 slash commands for guild 1481641949651013765.
 
 Main setup commands:
 /setup template
@@ -69,6 +69,7 @@ Main setup commands:
 /emoji add
 /role give-everyone
 /bot profile
+/testverify
 /help
 /balance
 /daily
@@ -126,6 +127,12 @@ Use /setup welcome channel:#welcome auto_role:@Member
 New members are welcomed with invite information, member number, and a short
 warm message. The auto role is given immediately on join. There is no rules or
 manual button flow.
+
+OAuth test verify:
+Use /testverify to create a Discord authorization link with identify and
+guilds.join. This shows the "Join servers for you" permission. To make it fully
+join users to a server, configure a public OAuth callback URL as
+VERIFY_REDIRECT_URI and add the same redirect URL in Discord Developer Portal.
 
 Give everyone a role:
 Use /role give-everyone role:@RoleName

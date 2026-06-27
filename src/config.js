@@ -10,6 +10,7 @@ export const config = {
   dashboardBotSecret: process.env.DASHBOARD_BOT_SECRET,
   dashboardFastSync: ['1', 'true', 'yes', 'on'].includes(String(process.env.DASHBOARD_FAST_SYNC || '').toLowerCase()),
   confessionLogWebhookUrl: process.env.CONFESSION_LOG_WEBHOOK_URL,
+  verifyRedirectUri: process.env.VERIFY_REDIRECT_URI,
 };
 
 export function requireConfig(keys) {

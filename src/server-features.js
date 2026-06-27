@@ -204,6 +204,10 @@ export const featureCommands = [
         ),
     ),
   new SlashCommandBuilder()
+    .setName('testverify')
+    .setDescription('Create a test Discord OAuth verification link.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder()
     .setName('ticket')
     .setDescription('Ticket commands.')
     .addSubcommand((sub) => sub.setName('close').setDescription('Close the current ticket.')),
@@ -495,6 +499,7 @@ export async function initFeatures(client) {
 
 export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'setup') return runSetup(interaction);
+  if (interaction.commandName === 'testverify') return runTestVerify(interaction);
   if (interaction.commandName === 'ticket') return runTicket(interaction);
   if (interaction.commandName === 'mod') return runMod(interaction);
   if (interaction.commandName === 'poll') return runPoll(interaction);
@@ -1066,6 +1071,58 @@ async function runSetup(interaction) {
   }
 
   return false;
+}
+
+async function runTestVerify(interaction) {
+  const redirectUri = config.verifyRedirectUri;
+  const state = Buffer.from(JSON.stringify({
+    guildId: interaction.guildId,
+    requestedBy: interaction.user.id,
+    createdAt: Date.now(),
+  })).toString('base64url');
+  const params = new URLSearchParams({
+    client_id: config.clientId,
+    response_type: 'code',
+    scope: 'identify guilds.join',
+    state,
+  });
+
+  if (redirectUri) {
+    params.set('redirect_uri', redirectUri);
+  }
+
+  const url = `https://discord.com/oauth2/authorize?${params.toString()}`;
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('S.A.I Test Verify')
+    .setDescription('This creates the Discord authorization screen with the same kind of permission shown in your screenshot.')
+    .addFields(
+      { name: 'Permission Requested', value: '`Join servers for you` and basic profile access.' },
+      {
+        name: 'Important',
+        value: redirectUri
+          ? 'The link can authorize the user. The next step is adding a callback endpoint that exchanges the code and stores the access token.'
+          : 'VERIFY_REDIRECT_URI is not set yet, so this is only a test link. To actually complete OAuth, add a public callback URL in Discord Developer Portal and Katabump .env.',
+      },
+      {
+        name: 'Can S.A.I force-add users?',
+        value: 'No. The user must authorize first. After that, Discord allows adding them only with a valid `guilds.join` access token and S.A.I must already be in that server.',
+      },
+    );
+
+  await interaction.reply({
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('Open Test Verify')
+          .setStyle(ButtonStyle.Link)
+          .setURL(url),
+      ),
+    ],
+    ephemeral: true,
+  });
+  return true;
 }
 
 async function runTicket(interaction) {
