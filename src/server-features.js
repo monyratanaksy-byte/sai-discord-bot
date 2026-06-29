@@ -2447,41 +2447,64 @@ async function runEmoji(interaction) {
 async function runRole(interaction) {
   if (interaction.options.getSubcommand() !== 'give-everyone') return false;
   const role = interaction.options.getRole('role', true);
+  await interaction.deferReply({ ephemeral: true });
 
   if (role.managed || role.id === interaction.guild.id) {
-    await interaction.reply({ content: 'That role cannot be assigned manually.', ephemeral: true });
+    await interaction.editReply('That role cannot be assigned manually.');
     return true;
   }
 
   const me = await interaction.guild.members.fetchMe().catch(() => null);
   if (!me?.permissions.has(PermissionFlagsBits.ManageRoles) || role.position >= me.roles.highest.position) {
-    await interaction.reply({
-      content: 'S.A.I needs Manage Roles and its role must be above the role you want to give.',
-      ephemeral: true,
-    });
+    await interaction.editReply('S.A.I needs Manage Roles and its role must be above the role you want to give.');
     return true;
   }
 
-  await interaction.deferReply({ ephemeral: true });
-  const members = await interaction.guild.members.fetch();
-  let added = 0;
-  let skipped = 0;
+  const requester = await interaction.guild.members.fetch(interaction.user.id).catch(() => interaction.member);
+  if (!requester?.permissions.has(PermissionFlagsBits.Administrator)) {
+    await interaction.editReply('Only admins can give a role to everyone.');
+    return true;
+  }
 
-  for (const member of members.values()) {
-    if (member.user.bot || member.roles.cache.has(role.id)) {
-      skipped += 1;
-      continue;
-    }
+  const members = await interaction.guild.members.fetch({ force: true }).catch((error) => {
+    console.error('Give everyone member fetch failed:', error);
+    return null;
+  });
+  if (!members) {
+    await interaction.editReply('Could not fetch the server member list. Make sure S.A.I has the Server Members Intent enabled in the Discord Developer Portal.');
+    return true;
+  }
+
+  const targets = members.filter((member) => !member.user.bot && !member.roles.cache.has(role.id));
+  if (!targets.size) {
+    await interaction.editReply(`No members need ${role}. Everyone already has it or only bots were found.`);
+    return true;
+  }
+
+  await interaction.editReply(`Started giving ${role} to ${targets.size} member(s). This can take a bit on larger servers.`);
+
+  let added = 0;
+  let failed = 0;
+  let processed = 0;
+
+  for (const member of targets.values()) {
     await member.roles.add(role, `S.A.I give everyone requested by ${interaction.user.tag}.`)
       .then(() => {
         added += 1;
       })
       .catch(() => {
-        skipped += 1;
+        failed += 1;
       });
+    processed += 1;
+
+    if (processed % 25 === 0 || processed === targets.size) {
+      await interaction.editReply(`Giving ${role} to everyone...\nProgress: ${processed}/${targets.size}\nAdded: ${added}\nFailed: ${failed}`)
+        .catch(() => {});
+    }
   }
 
-  await interaction.editReply(`Finished. Added ${role} to ${added} member(s). Skipped ${skipped}.`);
+  const skipped = members.size - targets.size;
+  await interaction.editReply(`Finished giving ${role}.\nAdded: ${added}\nFailed: ${failed}\nSkipped: ${skipped}`);
   await logEvent(interaction.guild, 'Role Given To Everyone', `${interaction.user.tag} gave ${role} to ${added} member(s).`);
   return true;
 }
