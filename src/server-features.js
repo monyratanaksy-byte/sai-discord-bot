@@ -491,6 +491,18 @@ export const featureCommands = [
     .addSubcommand((sub) => sub.setName('view').setDescription('View shop items.'))
     .addSubcommand((sub) =>
       sub
+        .setName('setup')
+        .setDescription('Set the public shop channel and post/update the shop panel.')
+        .addChannelOption((option) =>
+          option
+            .setName('channel')
+            .setDescription('Shop channel.')
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(true),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
         .setName('add-role')
         .setDescription('Add a purchasable role.')
         .addRoleOption((option) => option.setName('role').setDescription('Role.').setRequired(true))
@@ -501,6 +513,31 @@ export const featureCommands = [
         .setName('remove-role')
         .setDescription('Remove a role from the shop.')
         .addRoleOption((option) => option.setName('role').setDescription('Role.').setRequired(true)),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('add-privilege')
+        .setDescription('Add a purchasable server privilege.')
+        .addStringOption((option) =>
+          option
+            .setName('privilege')
+            .setDescription('Privilege to sell.')
+            .setRequired(true)
+            .addChoices({ name: 'Rename public voice room', value: 'public-room-rename' }),
+        )
+        .addIntegerOption((option) => option.setName('price').setDescription('Coin price.').setRequired(true)),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('remove-privilege')
+        .setDescription('Remove a purchasable privilege.')
+        .addStringOption((option) =>
+          option
+            .setName('privilege')
+            .setDescription('Privilege to remove.')
+            .setRequired(true)
+            .addChoices({ name: 'Rename public voice room', value: 'public-room-rename' }),
+        ),
     ),
   new SlashCommandBuilder()
     .setName('emoji')
@@ -570,6 +607,7 @@ export const featureCommands = [
 export async function initFeatures(client) {
   await Promise.all(client.guilds.cache.map((guild) => refreshInviteCache(guild)));
   await Promise.all(client.guilds.cache.map((guild) => updateStatsChannels(guild)));
+  await Promise.all(client.guilds.cache.map((guild) => refreshShopPanel(guild)));
   await Promise.all(client.guilds.cache.map((guild) => scheduleGuildReminders(client, guild.id)));
   seedActiveVoiceMembers(client);
   setInterval(() => rewardActiveVoiceMembers(client), voiceRewardIntervalMs).unref();
@@ -616,7 +654,7 @@ export async function handleFeatureButton(interaction) {
   if (action === 'ticket') return openTicket(interaction);
   if (action === 'close_ticket') return closeTicket(interaction);
   if (action === 'poll') return votePoll(interaction, args[0], Number(args[1]));
-  if (action === 'shop') return buyShopRole(interaction, args[0]);
+  if (action === 'shop') return buyShopItem(interaction, args[0]);
   return false;
 }
 
@@ -2044,6 +2082,22 @@ async function runShop(interaction) {
   const sub = interaction.options.getSubcommand();
   const guildData = await getGuildData(interaction.guildId);
 
+  if (sub === 'setup') {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+      await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
+      return true;
+    }
+
+    const channel = interaction.options.getChannel('channel', true);
+    await updateGuildData(interaction.guildId, (data) => {
+      data.config.shopChannelId = channel.id;
+      data.config.shopMessageId = null;
+    });
+    await refreshShopPanel(interaction.guild);
+    await interaction.reply({ content: `Shop panel is set up in ${channel}.`, ephemeral: true });
+    return true;
+  }
+
   if (sub === 'add-role' || sub === 'remove-role') {
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
       await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
@@ -2055,6 +2109,7 @@ async function runShop(interaction) {
       await updateGuildData(interaction.guildId, (data) => {
         delete data.shops[role.id];
       });
+      await refreshShopPanel(interaction.guild);
       await interaction.reply({ content: `${role} removed from the shop.`, ephemeral: true });
       return true;
     }
@@ -2065,32 +2120,130 @@ async function runShop(interaction) {
       return true;
     }
     await updateGuildData(interaction.guildId, (data) => {
-      data.shops[role.id] = { roleId: role.id, price };
+      data.shops[role.id] = { id: role.id, type: 'role', roleId: role.id, price };
     });
+    await refreshShopPanel(interaction.guild);
     await interaction.reply({ content: `${role} added to the shop for ${price} coins.`, ephemeral: true });
     return true;
   }
 
-  const items = Object.values(guildData.shops || {});
+  if (sub === 'add-privilege' || sub === 'remove-privilege') {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+      await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
+      return true;
+    }
+
+    const privilege = interaction.options.getString('privilege', true);
+    if (sub === 'remove-privilege') {
+      await updateGuildData(interaction.guildId, (data) => {
+        delete data.shopPrivileges[privilege];
+      });
+      await refreshShopPanel(interaction.guild);
+      await interaction.reply({ content: `${shopPrivilegeLabel(privilege)} removed from the shop.`, ephemeral: true });
+      return true;
+    }
+
+    const price = interaction.options.getInteger('price', true);
+    if (price < 1 || price > 1_000_000) {
+      await interaction.reply({ content: 'Price must be between 1 and 1,000,000 coins.', ephemeral: true });
+      return true;
+    }
+    await updateGuildData(interaction.guildId, (data) => {
+      data.shopPrivileges[privilege] = { id: privilege, type: 'privilege', privilege, price };
+    });
+    await refreshShopPanel(interaction.guild);
+    await interaction.reply({ content: `${shopPrivilegeLabel(privilege)} added to the shop for ${price} coins.`, ephemeral: true });
+    return true;
+  }
+
+  const items = shopItems(guildData);
   if (!items.length) {
     await interaction.reply({ content: 'The shop is empty.', ephemeral: true });
     return true;
   }
 
   await interaction.reply({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(0xf1c40f)
-        .setTitle('Server Shop')
-        .setDescription(items.map((item) => `<@&${item.roleId}> - ${item.price} coins`).join('\n')),
-    ],
-    components: [
-      new ActionRowBuilder().addComponents(
-        items.slice(0, 5).map((item) => button(`feature:shop:${item.roleId}`, `Buy ${item.price}`, ButtonStyle.Success)),
-      ),
-    ],
+    ...shopPanelPayload(guildData),
     ephemeral: true,
   });
+  return true;
+}
+
+function shopItems(guildData) {
+  return [
+    ...Object.values(guildData.shops || {}).map((item) => ({ ...item, type: item.type || 'role', id: item.id || item.roleId })),
+    ...Object.values(guildData.shopPrivileges || {}),
+  ].filter((item) => item?.price);
+}
+
+function shopPrivilegeLabel(privilege) {
+  return {
+    'public-room-rename': 'Rename public voice room',
+  }[privilege] || privilege;
+}
+
+function shopItemLine(item) {
+  if (item.type === 'role') return `<@&${item.roleId}> - **${item.price}** coins`;
+  return `✨ **${shopPrivilegeLabel(item.privilege)}** - **${item.price}** coins`;
+}
+
+function shopPanelPayload(guildData) {
+  const items = shopItems(guildData).slice(0, 25);
+  const embed = new EmbedBuilder()
+    .setColor(0xf1c40f)
+    .setTitle('S.A.I Coin Shop')
+    .setDescription(
+      items.length
+        ? items.map(shopItemLine).join('\n')
+        : 'The shop is empty right now.',
+    )
+    .setFooter({ text: 'Earn coins from activity, daily rewards, and VC.' })
+    .setTimestamp();
+
+  const rows = [];
+  for (let index = 0; index < Math.min(items.length, 25); index += 5) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        items.slice(index, index + 5).map((item) =>
+          button(`feature:shop:${item.id}`, item.type === 'role' ? `Buy Role ${item.price}` : `Buy Perk ${item.price}`, ButtonStyle.Success),
+        ),
+      ),
+    );
+  }
+
+  const payload = {
+    embeds: [embed],
+    allowedMentions: { parse: [] },
+  };
+  if (rows.length) payload.components = rows;
+  return payload;
+}
+
+async function refreshShopPanel(guild) {
+  const guildData = await getGuildData(guild.id);
+  if (!guildData.config.shopChannelId) return false;
+
+  const channel = await guild.channels.fetch(guildData.config.shopChannelId).catch(() => null);
+  if (!channel?.isTextBased()) return false;
+
+  const payload = shopPanelPayload(guildData);
+  let message = guildData.config.shopMessageId
+    ? await channel.messages.fetch(guildData.config.shopMessageId).catch(() => null)
+    : null;
+
+  if (message) {
+    await message.edit(payload).catch(() => {
+      message = null;
+    });
+  }
+
+  if (!message) {
+    const sent = await channel.send(payload);
+    await updateGuildData(guild.id, (data) => {
+      data.config.shopMessageId = sent.id;
+    });
+  }
+
   return true;
 }
 
@@ -2424,28 +2577,61 @@ async function votePoll(interaction, pollId, optionIndex) {
   return true;
 }
 
-async function buyShopRole(interaction, roleId) {
+async function buyShopItem(interaction, itemId) {
   const guildData = await getGuildData(interaction.guildId);
-  const item = guildData.shops[roleId];
+  const rawItem = guildData.shops[itemId] || guildData.shopPrivileges?.[itemId];
+  const item = rawItem ? { ...rawItem, type: rawItem.type || 'role', id: rawItem.id || rawItem.roleId || rawItem.privilege } : null;
   const progress = getUserProgress(guildData, interaction.user.id);
   if (!item || progress.coins < item.price) {
     await interaction.reply({ content: 'You do not have enough coins for that.', ephemeral: true });
     return true;
   }
+
+  if (item.type === 'role') {
+    const role = await interaction.guild.roles.fetch(item.roleId).catch(() => null);
+    if (!role) {
+      await interaction.reply({ content: 'That role no longer exists.', ephemeral: true });
+      return true;
+    }
+    if (interaction.member.roles.cache.has(role.id)) {
+      await interaction.reply({ content: `You already have ${role}.`, ephemeral: true });
+      return true;
+    }
+    await interaction.member.roles.add(role.id, 'S.A.I shop purchase.');
+  }
+
   progress.coins -= item.price;
-  await interaction.member.roles.add(roleId, 'S.A.I shop purchase.');
+  let reply = item.type === 'role'
+    ? `Purchased <@&${item.roleId}>.`
+    : `Purchased **${shopPrivilegeLabel(item.privilege)}**.`;
+
   await updateGuildData(interaction.guildId, (data) => {
+    if (item.type === 'privilege') {
+      data.economy.privileges ||= {};
+      data.economy.privileges[interaction.user.id] ||= {};
+      data.economy.privileges[interaction.user.id][item.privilege] = {
+        purchasedAt: Date.now(),
+      };
+    }
     data.economy.shopPurchases ||= [];
     data.economy.shopPurchases.unshift({
       id: crypto.randomUUID(),
       userId: interaction.user.id,
-      roleId,
+      itemId,
+      type: item.type,
+      roleId: item.roleId || null,
+      privilege: item.privilege || null,
       price: item.price,
       at: Date.now(),
     });
     data.economy.shopPurchases.splice(200);
   });
-  await interaction.reply({ content: `Purchased <@&${roleId}>.`, ephemeral: true });
+
+  if (item.type === 'privilege' && item.privilege === 'public-room-rename') {
+    reply += '\nYou can now rename your public join-to-create room when you create one.';
+  }
+
+  await interaction.reply({ content: `${reply}\nBalance: ${progress.coins} coins.`, ephemeral: true });
   return true;
 }
 

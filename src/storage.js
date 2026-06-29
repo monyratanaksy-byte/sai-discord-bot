@@ -86,6 +86,8 @@ export function createGuildData() {
       boosterChannelId: null,
       confessionChannelId: null,
       activityChannelId: null,
+      shopChannelId: null,
+      shopMessageId: null,
       automodEnabled: false,
       automodInviteLinks: true,
       automodMassMentions: true,
@@ -136,6 +138,7 @@ export function createGuildData() {
       currentWeek: null,
     },
     shops: {},
+    shopPrivileges: {},
     backups: {},
   };
 }

@@ -200,6 +200,14 @@ export async function handleVoiceButton(interaction) {
   }
 
   if (interaction.customId === 'voice_rename') {
+    if (!room.isBoosterRoom && !(await hasRoomPrivilege(interaction.guild.id, interaction.user.id, 'public-room-rename'))) {
+      await interaction.reply({
+        content: 'Buy the public room rename perk from the shop to rename public rooms.',
+        ephemeral: true,
+      });
+      return;
+    }
+
     await interaction.showModal(
       new ModalBuilder()
         .setCustomId(`voice_rename_modal:${room.channel.id}`)
@@ -438,6 +446,11 @@ export async function handleVoiceModal(interaction) {
     }
 
   if (modalAction === 'voice_rename_modal') {
+    if (!room.isBoosterRoom && !(await hasRoomPrivilege(interaction.guild.id, interaction.user.id, 'public-room-rename'))) {
+      await interaction.editReply('Buy the public room rename perk from the shop to rename public rooms.');
+      return;
+    }
+
     const name = interaction.fields.getTextInputValue('name').trim();
     const cooldown = getRoomNameCooldown(room.channel.id);
     if (cooldown > 0) {
@@ -700,6 +713,9 @@ async function createStandardGardenRoom(newState) {
   });
 
   await member.voice.setChannel(room, 'S.A.I moved member to standard temporary room.');
+  if (hasRoomPrivilegeInData(guildData, member.id, 'public-room-rename')) {
+    await sendControlPanel(room, member.id);
+  }
 }
 
 async function createBoosterRoom(newState, guildData) {
@@ -788,11 +804,13 @@ async function sendControlPanel(channel, ownerId) {
     .setDescription(
       [
         `<@${ownerId}> owns this voice room.${coOwnerLine}`,
-        'Use the buttons below to manage access, visibility, name, user limit, or deletion.',
+        room?.isBoosterRoom
+          ? 'Use the buttons below to manage access, visibility, name, user limit, or deletion.'
+          : 'Use the button below to rename this public room.',
       ].join('\n'),
     );
 
-  const rows = [
+  const rows = room?.isBoosterRoom ? [
     new ActionRowBuilder().addComponents(
       button('voice_rename', 'Rename', ButtonStyle.Primary),
       button('voice_limit', 'Limit', ButtonStyle.Primary),
@@ -814,6 +832,8 @@ async function sendControlPanel(channel, ownerId) {
       ...(room?.isBoosterRoom ? [button('voice_coowner', 'Co-owner', ButtonStyle.Primary)] : []),
       button('voice_delete', 'Delete Room', ButtonStyle.Danger),
     ),
+  ] : [
+    new ActionRowBuilder().addComponents(button('voice_rename', 'Rename', ButtonStyle.Primary)),
   ];
 
   if (typeof channel.send === 'function') {
@@ -1019,6 +1039,15 @@ async function showUserAccessModal(interaction, room, action) {
 function extractUserId(value) {
   const match = value.match(/\d{17,20}/);
   return match?.[0] || null;
+}
+
+async function hasRoomPrivilege(guildId, userId, privilege) {
+  const guildData = await getGuildData(guildId);
+  return hasRoomPrivilegeInData(guildData, userId, privilege);
+}
+
+function hasRoomPrivilegeInData(guildData, userId, privilege) {
+  return Boolean(guildData.economy?.privileges?.[userId]?.[privilege]);
 }
 
 async function getRoomForInteraction(interaction) {
