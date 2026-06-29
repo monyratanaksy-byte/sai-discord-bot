@@ -60,6 +60,7 @@ export const voiceCommands = [
 export async function refreshPersistentVoicePanels(client) {
   await Promise.all(client.guilds.cache.map(async (guild) => {
     const guildData = await getGuildData(guild.id);
+    await cleanupStandardRoomsOnStartup(guild, guildData);
     const rooms = Object.values(guildData.voiceRooms || {}).filter((room) => room?.isBoosterRoom);
 
     for (const saved of rooms) {
@@ -97,6 +98,49 @@ export async function refreshPersistentVoicePanels(client) {
       await sendControlPanel(panelChannel, saved.ownerId, room);
     }
   }));
+}
+
+async function cleanupStandardRoomsOnStartup(guild, guildData) {
+  const rooms = Object.values(guildData.voiceRooms || {}).filter((room) => room && !room.isBoosterRoom);
+  const staleRoomIds = [];
+
+  for (const saved of rooms) {
+    const channel = saved.channelId
+      ? await guild.channels.fetch(saved.channelId).catch(() => null)
+      : null;
+
+    if (!channel) {
+      if (saved.channelId) staleRoomIds.push(saved.channelId);
+      continue;
+    }
+
+    if (channel.members?.size === 0) {
+      if (saved.textChannelId) {
+        const textChannel = await guild.channels.fetch(saved.textChannelId).catch(() => null);
+        await textChannel?.delete('S.A.I removed empty standard voice room text channel after restart.').catch(() => {});
+      }
+      await channel.delete('S.A.I removed empty standard voice room after restart.').catch(() => {});
+      staleRoomIds.push(saved.channelId);
+      continue;
+    }
+
+    temporaryRooms.set(channel.id, {
+      channel,
+      ownerId: saved.ownerId,
+      coOwnerId: saved.coOwnerId || null,
+      createdAt: saved.createdAt,
+      textChannelId: saved.textChannelId || null,
+      isBoosterRoom: false,
+    });
+  }
+
+  if (staleRoomIds.length) {
+    await updateGuildData(guild.id, (data) => {
+      for (const channelId of staleRoomIds) {
+        delete data.voiceRooms[channelId];
+      }
+    });
+  }
 }
 
 export async function handleVoiceStateUpdate(oldState, newState) {
