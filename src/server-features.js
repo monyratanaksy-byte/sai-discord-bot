@@ -1265,7 +1265,7 @@ async function runSetupVerifyOff(interaction) {
   const deleteChannel = interaction.options.getBoolean('delete_channel') || false;
   await interaction.deferReply({ ephemeral: true });
 
-  const guildData = getGuildData(interaction.guildId);
+  const guildData = await getGuildData(interaction.guildId);
   const verifyChannelId = guildData.config.verifyChannelId;
   const verifiedRoleId = guildData.config.verifiedRoleId;
 
