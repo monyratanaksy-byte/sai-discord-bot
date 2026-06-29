@@ -135,9 +135,21 @@ export async function handleVoiceButton(interaction) {
       return;
     }
 
-    if (!(await isRoomOwner(interaction, room))) {
+    if (interaction.customId === 'voice_coowner') {
+      if (interaction.user.id !== room.ownerId) {
+        await interaction.reply({
+          content: 'Only the room owner can choose a co-owner.',
+          ephemeral: true,
+        });
+        return;
+      }
+      await showCoOwnerPicker(interaction, room);
+      return;
+    }
+
+    if (!(await isRoomManager(interaction, room))) {
       await interaction.reply({
-        content: 'Only the room owner can use this control.',
+        content: 'Only the room owner or co-owner can use this control.',
         ephemeral: true,
       });
       return;
@@ -270,8 +282,13 @@ export async function handleVoiceSelect(interaction) {
       return;
     }
 
-    if (!(await isRoomOwner(interaction, room))) {
-      await finishVoiceSelect(interaction, 'Only the room owner can update this room.');
+    if (selectAction === 'voice_coowner_select' && interaction.user.id !== room.ownerId) {
+      await finishVoiceSelect(interaction, 'Only the room owner can choose a co-owner.');
+      return;
+    }
+
+    if (selectAction !== 'voice_coowner_select' && !(await isRoomManager(interaction, room))) {
+      await finishVoiceSelect(interaction, 'Only the room owner or co-owner can update this room.');
       return;
     }
 
@@ -304,6 +321,17 @@ export async function handleVoiceSelect(interaction) {
 
     if (selectAction === 'voice_invite_select') {
       await sendRoomInvite(interaction, room, member);
+      return;
+    }
+
+    if (selectAction === 'voice_coowner_select') {
+      if (member.id === room.ownerId || member.user.bot) {
+        await finishVoiceSelect(interaction, 'Choose a non-bot friend who is not already the owner.');
+        return;
+      }
+
+      await setRoomCoOwner(interaction.guild.id, room, member);
+      await finishVoiceSelect(interaction, `${member} is now co-owner and can manage this room.`);
       return;
     }
 
@@ -404,8 +432,8 @@ export async function handleVoiceModal(interaction) {
       return;
     }
 
-    if (!(await isRoomOwner(interaction, room))) {
-      await interaction.editReply('Only the room owner can update this room.');
+    if (!(await isRoomManager(interaction, room))) {
+      await interaction.editReply('Only the room owner or co-owner can update this room.');
       return;
     }
 
@@ -522,6 +550,31 @@ async function transferRoomOwnership(guildId, room, newOwnerId) {
   });
 }
 
+async function setRoomCoOwner(guildId, room, member) {
+  room.coOwnerId = member.id;
+
+  await room.channel.permissionOverwrites.edit(member.id, {
+    ViewChannel: true,
+    Connect: true,
+    ManageChannels: true,
+    MoveMembers: true,
+  });
+
+  if (room.textChannelId) {
+    const textChannel = await room.channel.guild.channels.fetch(room.textChannelId).catch(() => null);
+    await textChannel?.permissionOverwrites.edit(member.id, {
+      ViewChannel: true,
+      SendMessages: true,
+    }).catch(() => {});
+  }
+
+  await updateGuildData(guildId, (guildData) => {
+    if (guildData.voiceRooms[room.channel.id]) {
+      guildData.voiceRooms[room.channel.id].coOwnerId = member.id;
+    }
+  });
+}
+
 function getRoomNameCooldown(channelId) {
   const readyAt = roomNameCooldowns.get(channelId) || 0;
   const remaining = readyAt - Date.now();
@@ -568,6 +621,7 @@ async function getBoosterRoomForOwner(guild, ownerId, guildData) {
   const room = {
     channel,
     ownerId: entry.ownerId,
+    coOwnerId: entry.coOwnerId || null,
     createdAt: entry.createdAt,
     textChannelId: entry.textChannelId,
     isBoosterRoom: true,
@@ -629,6 +683,7 @@ async function createStandardGardenRoom(newState) {
   temporaryRooms.set(room.id, {
     channel: room,
     ownerId: member.id,
+    coOwnerId: null,
     createdAt: Date.now(),
     textChannelId: null,
     isBoosterRoom: false,
@@ -637,6 +692,7 @@ async function createStandardGardenRoom(newState) {
     guildData.voiceRooms[room.id] = {
       channelId: room.id,
       ownerId: member.id,
+      coOwnerId: null,
       createdAt: Date.now(),
       textChannelId: null,
       isBoosterRoom: false,
@@ -690,6 +746,7 @@ async function createBoosterRoom(newState, guildData) {
   temporaryRooms.set(room.id, {
     channel: room,
     ownerId: member.id,
+    coOwnerId: null,
     createdAt: Date.now(),
     textChannelId: null,
     isBoosterRoom: true,
@@ -698,6 +755,7 @@ async function createBoosterRoom(newState, guildData) {
     guildData.voiceRooms[room.id] = {
       channelId: room.id,
       ownerId: member.id,
+      coOwnerId: null,
       createdAt: Date.now(),
       textChannelId: null,
       isBoosterRoom: true,
@@ -722,12 +780,14 @@ async function createBoosterRoom(newState, guildData) {
 }
 
 async function sendControlPanel(channel, ownerId) {
+  const room = temporaryRooms.get(channel.id);
+  const coOwnerLine = room?.coOwnerId ? `\n<@${room.coOwnerId}> is co-owner and can help manage it.` : '';
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle('S.A.I Voice Control Panel')
     .setDescription(
       [
-        `<@${ownerId}> owns this voice room.`,
+        `<@${ownerId}> owns this voice room.${coOwnerLine}`,
         'Use the buttons below to manage access, visibility, name, user limit, or deletion.',
       ].join('\n'),
     );
@@ -750,7 +810,10 @@ async function sendControlPanel(channel, ownerId) {
       button('voice_kick', 'Kick', ButtonStyle.Danger),
       button('voice_deny', 'Deny', ButtonStyle.Danger),
     ),
-    new ActionRowBuilder().addComponents(button('voice_delete', 'Delete Room', ButtonStyle.Danger)),
+    new ActionRowBuilder().addComponents(
+      ...(room?.isBoosterRoom ? [button('voice_coowner', 'Co-owner', ButtonStyle.Primary)] : []),
+      button('voice_delete', 'Delete Room', ButtonStyle.Danger),
+    ),
   ];
 
   if (typeof channel.send === 'function') {
@@ -789,6 +852,27 @@ async function showInvitePicker(interaction, room) {
 
   await sendTemporaryPicker(interaction, {
     content: 'Pick the friend you want S.A.I to DM with a join button.',
+    components: [new ActionRowBuilder().addComponents(select)],
+  });
+}
+
+async function showCoOwnerPicker(interaction, room) {
+  if (!room.isBoosterRoom) {
+    await interaction.reply({
+      content: 'Co-owner is a booster room perk.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const select = new UserSelectMenuBuilder()
+    .setCustomId(`voice_coowner_select:${room.channel.id}`)
+    .setPlaceholder('Choose one co-owner friend')
+    .setMinValues(1)
+    .setMaxValues(1);
+
+  await sendTemporaryPicker(interaction, {
+    content: 'Pick one friend to co-own and manage this booster room.',
     components: [new ActionRowBuilder().addComponents(select)],
   });
 }
@@ -973,6 +1057,7 @@ async function getRoomById(guild, channelId) {
   const room = {
     channel,
     ownerId: saved.ownerId,
+    coOwnerId: saved.coOwnerId || null,
     createdAt: saved.createdAt,
     textChannelId: saved.textChannelId,
     isBoosterRoom: Boolean(saved.isBoosterRoom),
@@ -983,6 +1068,13 @@ async function getRoomById(guild, channelId) {
 
 async function isRoomOwner(interaction, room) {
   if (interaction.user.id === room.ownerId) return true;
+
+  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  return member?.permissions.has(PermissionFlagsBits.Administrator) || false;
+}
+
+async function isRoomManager(interaction, room) {
+  if (interaction.user.id === room.ownerId || interaction.user.id === room.coOwnerId) return true;
 
   const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
   return member?.permissions.has(PermissionFlagsBits.Administrator) || false;

@@ -342,6 +342,44 @@ export const featureCommands = [
     .setName('daily')
     .setDescription('Claim your daily coin reward.'),
   new SlashCommandBuilder()
+    .setName('gamble')
+    .setDescription('Play coin gambling games with server coins.')
+    .addSubcommand((sub) =>
+      sub
+        .setName('slots')
+        .setDescription('Spin the S.A.I slot machine.')
+        .addIntegerOption((option) => option.setName('amount').setDescription('Coins to bet.').setRequired(true)),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('coinflip')
+        .setDescription('Bet on heads or tails.')
+        .addIntegerOption((option) => option.setName('amount').setDescription('Coins to bet.').setRequired(true))
+        .addStringOption((option) =>
+          option
+            .setName('choice')
+            .setDescription('Your side.')
+            .setRequired(true)
+            .addChoices({ name: 'Heads', value: 'heads' }, { name: 'Tails', value: 'tails' }),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('dice')
+        .setDescription('Guess a dice roll from 1 to 6.')
+        .addIntegerOption((option) => option.setName('amount').setDescription('Coins to bet.').setRequired(true))
+        .addIntegerOption((option) =>
+          option
+            .setName('guess')
+            .setDescription('Number from 1 to 6.')
+            .setRequired(true)
+            .setMinValue(1)
+            .setMaxValue(6),
+        ),
+    )
+    .addSubcommand((sub) => sub.setName('stats').setDescription('Show your gambling stats.'))
+    .addSubcommand((sub) => sub.setName('leaderboard').setDescription('Show the gambling leaderboard.')),
+  new SlashCommandBuilder()
     .setName('givecoins')
     .setDescription('Give coins to another member.')
     .addUserOption((option) => option.setName('user').setDescription('User.').setRequired(true))
@@ -549,6 +587,7 @@ export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'rank') return runRank(interaction);
   if (interaction.commandName === 'balance') return runBalance(interaction);
   if (interaction.commandName === 'daily') return runDaily(interaction);
+  if (interaction.commandName === 'gamble') return runGamble(interaction);
   if (interaction.commandName === 'givecoins') return runGiveCoins(interaction);
   if (interaction.commandName === 'rate') return runRate(interaction);
   if (interaction.commandName === 'activity') return runActivity(interaction);
@@ -1611,6 +1650,165 @@ async function runDaily(interaction) {
   await interaction.reply({
     content: `Daily claimed: +${result.reward} coins. Your balance is now ${result.coins} coins.`,
     ephemeral: true,
+  });
+  return true;
+}
+
+async function runGamble(interaction) {
+  const sub = interaction.options.getSubcommand();
+  if (sub === 'stats') return runGambleStats(interaction);
+  if (sub === 'leaderboard') return runGambleLeaderboard(interaction);
+
+  const amount = interaction.options.getInteger('amount', true);
+  if (amount < 10 || amount > 50_000) {
+    await interaction.reply({ content: 'Bet must be between 10 and 50,000 coins.', ephemeral: true });
+    return true;
+  }
+
+  let result;
+  await updateGuildData(interaction.guildId, (guildData) => {
+    const progress = getUserProgress(guildData, interaction.user.id);
+    if (progress.coins < amount) {
+      result = { ok: false, reason: `You only have ${progress.coins} coins.` };
+      return;
+    }
+
+    if (sub === 'slots') result = playSlots(amount);
+    if (sub === 'coinflip') result = playCoinflip(amount, interaction.options.getString('choice', true));
+    if (sub === 'dice') result = playDice(amount, interaction.options.getInteger('guess', true));
+
+    if (!result) {
+      result = { ok: false, reason: 'That gambling game is not available.' };
+      return;
+    }
+
+    progress.coins = Math.max(0, progress.coins - amount + result.payout);
+    const stats = getGambleStats(guildData, interaction.user.id);
+    stats.plays += 1;
+    stats.wagered += amount;
+    stats.payout += result.payout;
+    stats.profit += result.payout - amount;
+    if (result.payout > amount) stats.wins += 1;
+    else stats.losses += 1;
+    stats.biggestWin = Math.max(stats.biggestWin, result.payout - amount);
+    result.ok = true;
+    result.balance = progress.coins;
+  });
+
+  if (!result.ok) {
+    await interaction.reply({ content: result.reason, ephemeral: true });
+    return true;
+  }
+
+  await interaction.reply({
+    embeds: [gambleResultEmbed(interaction.user, result)],
+  });
+  return true;
+}
+
+function playSlots(amount) {
+  const symbols = ['🍒', '🍋', '🔔', '⭐', '💎', '7️⃣'];
+  const weights = [30, 24, 18, 14, 9, 5];
+  const reels = [weightedPick(symbols, weights), weightedPick(symbols, weights), weightedPick(symbols, weights)];
+  const [a, b, c] = reels;
+  let multiplier = 0;
+  let title = 'Slot Machine';
+
+  if (a === b && b === c) {
+    multiplier = { '🍒': 3, '🍋': 4, '🔔': 6, '⭐': 8, '💎': 12, '7️⃣': 25 }[a] || 3;
+    title = a === '7️⃣' ? 'JACKPOT' : 'Triple Match';
+  } else if (a === b || a === c || b === c) {
+    multiplier = 1.5;
+    title = 'Pair Hit';
+  }
+
+  const payout = Math.floor(amount * multiplier);
+  return {
+    game: 'Slots',
+    title,
+    display: `╭────────────╮\n│ ${reels.join(' │ ')} │\n╰────────────╯`,
+    amount,
+    payout,
+  };
+}
+
+function playCoinflip(amount, choice) {
+  const result = Math.random() < 0.5 ? 'heads' : 'tails';
+  const won = result === choice;
+  return {
+    game: 'Coinflip',
+    title: won ? 'You called it' : 'Wrong side',
+    display: `${result === 'heads' ? '🪙 Heads' : '🪙 Tails'}\nYour pick: **${choice}**`,
+    amount,
+    payout: won ? amount * 2 : 0,
+  };
+}
+
+function playDice(amount, guess) {
+  const roll = Math.floor(Math.random() * 6) + 1;
+  const won = roll === guess;
+  return {
+    game: 'Dice',
+    title: won ? 'Perfect roll' : 'Dice missed',
+    display: `🎲 Rolled **${roll}**\nYour guess: **${guess}**`,
+    amount,
+    payout: won ? amount * 5 : 0,
+  };
+}
+
+function gambleResultEmbed(user, result) {
+  const profit = result.payout - result.amount;
+  return new EmbedBuilder()
+    .setColor(profit > 0 ? 0x57f287 : 0xed4245)
+    .setTitle(`${result.game}: ${result.title}`)
+    .setDescription(result.display)
+    .addFields(
+      { name: 'Bet', value: `${result.amount} coins`, inline: true },
+      { name: 'Payout', value: `${result.payout} coins`, inline: true },
+      { name: profit >= 0 ? 'Profit' : 'Loss', value: `${profit >= 0 ? '+' : ''}${profit} coins`, inline: true },
+      { name: 'Balance', value: `${result.balance} coins`, inline: true },
+    )
+    .setFooter({ text: `${user.username}'s gamble` })
+    .setTimestamp();
+}
+
+async function runGambleStats(interaction) {
+  const guildData = await getGuildData(interaction.guildId);
+  const stats = getGambleStats(guildData, interaction.user.id);
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setTitle('Your gambling stats')
+        .addFields(
+          { name: 'Plays', value: String(stats.plays), inline: true },
+          { name: 'Wins', value: String(stats.wins), inline: true },
+          { name: 'Losses', value: String(stats.losses), inline: true },
+          { name: 'Wagered', value: `${stats.wagered} coins`, inline: true },
+          { name: 'Total payout', value: `${stats.payout} coins`, inline: true },
+          { name: 'Profit', value: `${stats.profit >= 0 ? '+' : ''}${stats.profit} coins`, inline: true },
+          { name: 'Biggest win', value: `${stats.biggestWin} coins`, inline: true },
+        ),
+    ],
+    ephemeral: true,
+  });
+  return true;
+}
+
+async function runGambleLeaderboard(interaction) {
+  const guildData = await getGuildData(interaction.guildId);
+  const rows = Object.entries(guildData.gambling || {})
+    .sort(([, a], [, b]) => Number(b.profit || 0) - Number(a.profit || 0))
+    .slice(0, 10)
+    .map(([userId, stats], index) => `${index + 1}. <@${userId}> - ${stats.profit >= 0 ? '+' : ''}${stats.profit || 0} coins (${stats.wins || 0}W/${stats.losses || 0}L)`);
+
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setTitle('Gambling Leaderboard')
+        .setDescription(rows.join('\n') || 'No gambling stats yet.'),
+    ],
   });
   return true;
 }
@@ -2897,6 +3095,30 @@ function getUserProgress(guildData, userId) {
   guildData.levels[userId].voiceSeconds ||= 0;
   updateProgressLevel(guildData.levels[userId]);
   return guildData.levels[userId];
+}
+
+function getGambleStats(guildData, userId) {
+  guildData.gambling ||= {};
+  guildData.gambling[userId] ||= {
+    plays: 0,
+    wins: 0,
+    losses: 0,
+    wagered: 0,
+    payout: 0,
+    profit: 0,
+    biggestWin: 0,
+  };
+  return guildData.gambling[userId];
+}
+
+function weightedPick(items, weights) {
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  let roll = Math.random() * total;
+  for (let index = 0; index < items.length; index += 1) {
+    roll -= weights[index];
+    if (roll <= 0) return items[index];
+  }
+  return items[items.length - 1];
 }
 
 function updateProgressLevel(progress) {

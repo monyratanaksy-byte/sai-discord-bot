@@ -117,6 +117,7 @@ export function createGuildData() {
     webhookTemplates: {},
     levels: {},
     economy: {},
+    gambling: {},
     afk: {},
     invites: {},
     inviteUses: {},
