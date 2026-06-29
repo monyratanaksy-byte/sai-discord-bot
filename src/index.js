@@ -25,6 +25,7 @@ import {
   handleVoiceModal,
   handleVoiceSelect,
   handleVoiceStateUpdate,
+  refreshPersistentVoicePanels,
 } from './voice-manager.js';
 import {
   initUserUtilities,
@@ -55,6 +56,9 @@ client.once(Events.ClientReady, (readyClient) => {
   console.log(`S.A.I is online as ${readyClient.user.tag}`);
   initFeatures(readyClient).catch((error) => {
     console.error('Feature initialization failed:', error);
+  });
+  refreshPersistentVoicePanels(readyClient).catch((error) => {
+    console.error('Voice panel refresh failed:', error);
   });
   initUserUtilities(readyClient).catch((error) => {
     console.error('User utility initialization failed:', error);

@@ -57,6 +57,48 @@ export const voiceCommands = [
     .addSubcommand((sub) => sub.setName('list').setDescription('Show your room ban list.')),
 ].map((command) => command.toJSON());
 
+export async function refreshPersistentVoicePanels(client) {
+  await Promise.all(client.guilds.cache.map(async (guild) => {
+    const guildData = await getGuildData(guild.id);
+    const rooms = Object.values(guildData.voiceRooms || {}).filter((room) => room?.isBoosterRoom);
+
+    for (const saved of rooms) {
+      const channel = await guild.channels.fetch(saved.channelId).catch(() => null);
+      if (!channel) continue;
+
+      const room = {
+        channel,
+        ownerId: saved.ownerId,
+        coOwnerId: saved.coOwnerId || null,
+        createdAt: saved.createdAt,
+        textChannelId: saved.textChannelId,
+        isBoosterRoom: true,
+      };
+      temporaryRooms.set(channel.id, room);
+
+      const panelChannel = saved.textChannelId
+        ? await guild.channels.fetch(saved.textChannelId).catch(() => null)
+        : channel;
+
+      if (!panelChannel?.send) continue;
+
+      if (saved.coOwnerId && panelChannel.id === saved.textChannelId) {
+        await panelChannel.permissionOverwrites.edit(saved.coOwnerId, {
+          ViewChannel: true,
+          SendMessages: true,
+        }).catch(() => {});
+      }
+
+      if (saved.controlPanelMessageId && panelChannel.messages?.fetch) {
+        const oldPanel = await panelChannel.messages.fetch(saved.controlPanelMessageId).catch(() => null);
+        await oldPanel?.delete().catch(() => {});
+      }
+
+      await sendControlPanel(panelChannel, saved.ownerId, room);
+    }
+  }));
+}
+
 export async function handleVoiceStateUpdate(oldState, newState) {
   if (
     newState.channelId &&
@@ -779,11 +821,13 @@ async function createBoosterRoom(newState, guildData) {
   });
 
   await member.voice.setChannel(room, 'S.A.I moved booster to permanent room.');
+  let panelChannel = room;
   const textChannel = await createTemporaryTextChannel(room, member.id).catch((error) => {
     console.error('Temporary text channel creation failed:', error);
     return null;
   });
   if (textChannel) {
+    panelChannel = textChannel;
     temporaryRooms.get(room.id).textChannelId = textChannel.id;
     await updateGuildData(guild.id, (guildData) => {
       if (guildData.voiceRooms[room.id]) {
@@ -792,11 +836,11 @@ async function createBoosterRoom(newState, guildData) {
     });
     await sendBoosterRoomWelcome(textChannel, room, member);
   }
-  await sendControlPanel(room, member.id);
+  await sendControlPanel(panelChannel, member.id, temporaryRooms.get(room.id));
 }
 
-async function sendControlPanel(channel, ownerId) {
-  const room = temporaryRooms.get(channel.id);
+async function sendControlPanel(channel, ownerId, roomOverride = null) {
+  const room = roomOverride || temporaryRooms.get(channel.id);
   const coOwnerLine = room?.coOwnerId ? `\n<@${room.coOwnerId}> is co-owner and can help manage it.` : '';
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
@@ -837,7 +881,17 @@ async function sendControlPanel(channel, ownerId) {
   ];
 
   if (typeof channel.send === 'function') {
-    await channel.send({ embeds: [embed], components: rows }).catch(() => {});
+    const message = await channel.send({ embeds: [embed], components: rows }).catch(() => null);
+    if (message?.pin) {
+      await message.pin('S.A.I pinned the voice control panel.').catch(() => {});
+      await updateGuildData(channel.guild.id, (guildData) => {
+        if (guildData.voiceRooms[channel.id]) {
+          guildData.voiceRooms[channel.id].controlPanelMessageId = message.id;
+        } else if (room?.channel?.id && guildData.voiceRooms[room.channel.id]) {
+          guildData.voiceRooms[room.channel.id].controlPanelMessageId = message.id;
+        }
+      });
+    }
   }
 }
 
