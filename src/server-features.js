@@ -589,7 +589,10 @@ export const featureCommands = [
             .setName('privilege')
             .setDescription('Privilege to sell.')
             .setRequired(true)
-            .addChoices({ name: 'Rename public voice room', value: 'public-room-rename' }),
+            .addChoices(
+              { name: 'Rename public voice room', value: 'public-room-rename' },
+              { name: 'Rob protection', value: 'rob-protection' },
+            ),
         )
         .addIntegerOption((option) => option.setName('price').setDescription('Coin price.').setRequired(true)),
     )
@@ -602,7 +605,10 @@ export const featureCommands = [
             .setName('privilege')
             .setDescription('Privilege to remove.')
             .setRequired(true)
-            .addChoices({ name: 'Rename public voice room', value: 'public-room-rename' }),
+            .addChoices(
+              { name: 'Rename public voice room', value: 'public-room-rename' },
+              { name: 'Rob protection', value: 'rob-protection' },
+            ),
         ),
     ),
   new SlashCommandBuilder()
@@ -2529,6 +2535,10 @@ async function runRob(interaction) {
     const robber = getUserProgress(guildData, interaction.user.id);
     const victim = getUserProgress(guildData, target.id);
 
+    if (hasEconomyPrivilegeInData(guildData, target.id, 'rob-protection')) {
+      result = { ok: false, reason: `${target.username} has rob protection from the coin shop.` };
+      return;
+    }
     if (nextAt > now) {
       result = { ok: false, reason: `You can rob again <t:${Math.floor(nextAt / 1000)}:R>.` };
       return;
@@ -2868,6 +2878,7 @@ function shopItems(guildData) {
 function shopPrivilegeLabel(privilege) {
   return {
     'public-room-rename': 'Rename public voice room',
+    'rob-protection': 'Rob protection',
   }[privilege] || privilege;
 }
 
@@ -3479,6 +3490,9 @@ async function buyShopItem(interaction, itemId) {
 
   if (item.type === 'privilege' && item.privilege === 'public-room-rename') {
     reply += '\nYou can now rename your public join-to-create room when you create one.';
+  }
+  if (item.type === 'privilege' && item.privilege === 'rob-protection') {
+    reply += '\nYou are now protected from /rob attempts.';
   }
 
   await interaction.reply({ content: `${reply}\nBalance: ${progress.coins} coins.`, ephemeral: true });
@@ -4326,6 +4340,10 @@ function button(customId, label, style) {
 function trim(value, max) {
   if (!value) return '[empty]';
   return value.length > max ? `${value.slice(0, max - 3)}...` : value;
+}
+
+function hasEconomyPrivilegeInData(guildData, userId, privilege) {
+  return Boolean(guildData.economy?.privileges?.[userId]?.[privilege]);
 }
 
 function formatMinutes(minutes) {
