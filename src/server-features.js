@@ -22,6 +22,8 @@ const boosterRewardMultiplier = 1.5;
 const voiceCompanionRewardMultiplier = 1.5;
 const dailyRewardCoins = 150;
 const dailyRewardCooldownMs = 24 * 60 * 60 * 1000;
+const weeklyRewardCoins = 1200;
+const weeklyRewardCooldownMs = 7 * 24 * 60 * 60 * 1000;
 const rankPassCooldownMs = 6 * 60 * 60 * 1000;
 const voiceMilestoneHours = [1, 5, 10, 25, 50, 100, 250, 500, 1000];
 const deletedMessages = new Map();
@@ -355,8 +357,21 @@ export const featureCommands = [
     .setName('daily')
     .setDescription('Claim your daily coin reward.'),
   new SlashCommandBuilder()
+    .setName('weekly')
+    .setDescription('Claim your weekly coin reward.'),
+  new SlashCommandBuilder()
     .setName('streak')
     .setDescription('Claim your daily streak coin reward.'),
+  new SlashCommandBuilder()
+    .setName('guide')
+    .setDescription('Post or view the S.A.I important commands guide.')
+    .addChannelOption((option) =>
+      option
+        .setName('channel')
+        .setDescription('Admin only: post the guide in this channel.')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(false),
+    ),
   new SlashCommandBuilder()
     .setName('gamble')
     .setDescription('Play coin gambling games with server coins.')
@@ -676,7 +691,9 @@ export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'rank') return runRank(interaction);
   if (interaction.commandName === 'balance') return runBalance(interaction);
   if (interaction.commandName === 'daily') return runDaily(interaction);
+  if (interaction.commandName === 'weekly') return runWeekly(interaction);
   if (interaction.commandName === 'streak') return runStreak(interaction);
+  if (interaction.commandName === 'guide') return runGuide(interaction);
   if (interaction.commandName === 'gamble') return runGamble(interaction);
   if (interaction.commandName === 'givecoins') return runGiveCoins(interaction);
   if (interaction.commandName === 'rob') return runRob(interaction);
@@ -710,6 +727,7 @@ export async function handleFeatureButton(interaction) {
   if (action === 'shop') return buyShopItem(interaction, args[0]);
   if (action === 'shop-select') return buyShopItem(interaction, interaction.values?.[0]);
   if (action === 'casino-enter') return enterCasinoGiveaway(interaction, args[0]);
+  if (action === 'guide') return showGuideHint(interaction, args[0]);
   return false;
 }
 
@@ -1873,6 +1891,46 @@ async function runDaily(interaction) {
   return true;
 }
 
+async function runWeekly(interaction) {
+  let result;
+  await updateGuildData(interaction.guildId, (guildData) => {
+    guildData.economy.weeklyClaims ||= {};
+    const lastClaim = Number(guildData.economy.weeklyClaims[interaction.user.id] || 0);
+    const now = Date.now();
+    if (now - lastClaim < weeklyRewardCooldownMs) {
+      result = { available: false, nextAt: lastClaim + weeklyRewardCooldownMs };
+      return;
+    }
+
+    const reward = applyRewardMultiplier(weeklyRewardCoins, rewardMultiplierForMember(interaction.member));
+    const progress = getUserProgress(guildData, interaction.user.id);
+    progress.coins += reward;
+    guildData.economy.weeklyClaims[interaction.user.id] = now;
+    result = { available: true, reward, coins: progress.coins };
+  });
+
+  if (!result.available) {
+    await interaction.reply({
+      content: `You already claimed your weekly. Try again <t:${Math.floor(result.nextAt / 1000)}:R>.`,
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle('Weekly Reward Claimed')
+        .setDescription(`${interaction.user} claimed **${result.reward} coins** for the week.`)
+        .addFields({ name: 'Balance', value: `${result.coins} coins`, inline: true })
+        .setFooter({ text: 'Come back next week for another reward.' })
+        .setTimestamp(),
+    ],
+  });
+  return true;
+}
+
 async function runStreak(interaction) {
   const today = dayNumber();
   let result;
@@ -1911,13 +1969,108 @@ async function runStreak(interaction) {
       new EmbedBuilder()
         .setColor(0xf1c40f)
         .setTitle('Daily Streak Claimed')
-        .setDescription(`You earned **${result.reward} coins**.`)
+        .setDescription(`${interaction.user} kept their streak alive and earned **${result.reward} coins**.`)
         .addFields(
           { name: 'Streak', value: `${result.count} day(s)`, inline: true },
           { name: 'Best', value: `${result.best} day(s)`, inline: true },
           { name: 'Balance', value: `${result.balance} coins`, inline: true },
         ),
     ],
+  });
+  return true;
+}
+
+async function runGuide(interaction) {
+  const channel = interaction.options.getChannel('channel');
+  const payload = guidePanelPayload(interaction.guild);
+
+  if (channel) {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+      await interaction.reply({ content: 'Administrator permission is required to post the guide in a channel.', ephemeral: true });
+      return true;
+    }
+    await channel.send(payload);
+    await interaction.reply({ content: `S.A.I guide posted in ${channel}.`, ephemeral: true });
+    return true;
+  }
+
+  await interaction.reply({ ...payload, ephemeral: true });
+  return true;
+}
+
+function guidePanelPayload(guild) {
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle(`${guild?.name || 'S.A.I'} Quick Guide`)
+    .setDescription('Start here if you want coins, levels, voice rooms, rewards, and shop perks.')
+    .addFields(
+      {
+        name: 'Earn Coins',
+        value: [
+          '`/daily` - claim coins every day',
+          '`/weekly` - claim a bigger weekly reward',
+          '`/streak` - keep a public daily streak going',
+          '`/rate` - see how fast you earn from chat and VC',
+        ].join('\n'),
+        inline: false,
+      },
+      {
+        name: 'Spend & Compete',
+        value: [
+          '`/shop view` - buy roles and perks',
+          '`/balance` - check coins',
+          '`/rank` - check level, XP, and coins',
+          '`/leaderboard` - see top XP members',
+        ].join('\n'),
+        inline: false,
+      },
+      {
+        name: 'Fun Economy',
+        value: [
+          '`/gamble slots` - play slots with coins',
+          '`/gamble pool` - see coins lost into the giveaway pool',
+          '`/rob` - risky coin steal with cooldown',
+        ].join('\n'),
+        inline: false,
+      },
+      {
+        name: 'Voice Rooms',
+        value: [
+          'Join the create-VC channel to make a room.',
+          'Boosters get permanent voice rooms and better rewards.',
+        ].join('\n'),
+        inline: false,
+      },
+    )
+    .setFooter({ text: 'Use /help for every command category.' })
+    .setTimestamp();
+
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        button('feature:guide:daily', 'Daily', ButtonStyle.Secondary),
+        button('feature:guide:weekly', 'Weekly', ButtonStyle.Secondary),
+        button('feature:guide:streak', 'Streak', ButtonStyle.Secondary),
+        button('feature:guide:shop', 'Shop', ButtonStyle.Secondary),
+        button('feature:guide:help', 'Help', ButtonStyle.Secondary),
+      ),
+    ],
+    allowedMentions: { parse: [] },
+  };
+}
+
+async function showGuideHint(interaction, topic) {
+  const hints = {
+    daily: '`/daily` gives you coins once every 24 hours.',
+    weekly: '`/weekly` gives you a bigger reward once every 7 days.',
+    streak: '`/streak` is public when claimed. Claim it every day to build your streak and earn more coins.',
+    shop: '`/shop view` opens the coin shop. Use the dropdowns to buy roles and perks.',
+    help: '`/help` opens the full command menu with categories and next/previous buttons.',
+  };
+
+  await interaction.reply({
+    content: hints[topic] || 'Use `/help` to see S.A.I commands.',
     ephemeral: true,
   });
   return true;
