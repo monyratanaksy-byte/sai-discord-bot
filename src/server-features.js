@@ -591,7 +591,7 @@ export const featureCommands = [
             .setRequired(true)
             .addChoices(
               { name: 'Rename public voice room', value: 'public-room-rename' },
-              { name: 'Rob protection', value: 'rob-protection' },
+              { name: 'Rob protection stack', value: 'rob-protection' },
             ),
         )
         .addIntegerOption((option) => option.setName('price').setDescription('Coin price.').setRequired(true)),
@@ -607,7 +607,7 @@ export const featureCommands = [
             .setRequired(true)
             .addChoices(
               { name: 'Rename public voice room', value: 'public-room-rename' },
-              { name: 'Rob protection', value: 'rob-protection' },
+              { name: 'Rob protection stack', value: 'rob-protection' },
             ),
         ),
     ),
@@ -1822,6 +1822,7 @@ async function runRank(interaction) {
   const user = interaction.options.getUser('user') || interaction.user;
   const guildData = await getGuildData(interaction.guildId);
   const progress = getUserProgress(guildData, user.id);
+  const robProtection = getRobProtectionCount(guildData, user.id);
   const member = await interaction.guild.members.fetch(user.id).catch(() => null);
   const multiplier = rewardMultiplierForMember(member);
   await interaction.reply({
@@ -1833,6 +1834,7 @@ async function runRank(interaction) {
           { name: 'Level', value: String(progress.level), inline: true },
           { name: 'XP', value: String(progress.xp), inline: true },
           { name: 'Coins', value: String(progress.coins), inline: true },
+          { name: 'Rob Protection', value: `${robProtection} stack(s)`, inline: true },
           {
             name: 'Booster Bonus',
             value: multiplier > 1 ? `${multiplier}x XP and coins active` : 'Not active',
@@ -1848,6 +1850,7 @@ async function runBalance(interaction) {
   const user = interaction.options.getUser('user') || interaction.user;
   const guildData = await getGuildData(interaction.guildId);
   const progress = getUserProgress(guildData, user.id);
+  const robProtection = getRobProtectionCount(guildData, user.id);
   await interaction.reply({
     embeds: [
       new EmbedBuilder()
@@ -1857,6 +1860,7 @@ async function runBalance(interaction) {
           { name: 'Coins', value: String(progress.coins), inline: true },
           { name: 'Level', value: String(progress.level), inline: true },
           { name: 'XP', value: String(progress.xp), inline: true },
+          { name: 'Rob Protection', value: `${robProtection} stack(s)`, inline: true },
         ),
     ],
     ephemeral: true,
@@ -2528,15 +2532,20 @@ async function runRob(interaction) {
 
   const now = Date.now();
   const cooldownMs = 60 * 60_000;
+  const today = dayNumber(now);
   let result;
   await updateGuildData(interaction.guildId, (guildData) => {
     guildData.economy.robCooldowns ||= {};
+    guildData.economy.robTargetAttempts ||= {};
     const nextAt = Number(guildData.economy.robCooldowns[interaction.user.id] || 0);
     const robber = getUserProgress(guildData, interaction.user.id);
     const victim = getUserProgress(guildData, target.id);
+    cleanupOldRobTargetAttempts(guildData, today);
+    const attemptsKey = `${interaction.user.id}:${target.id}:${today}`;
+    const attempts = Number(guildData.economy.robTargetAttempts[attemptsKey] || 0);
 
-    if (hasEconomyPrivilegeInData(guildData, target.id, 'rob-protection')) {
-      result = { ok: false, reason: `${target.username} has rob protection from the coin shop.` };
+    if (attempts >= 5) {
+      result = { ok: false, reason: `You already tried to rob ${target.username} 5 times today. Try again tomorrow.` };
       return;
     }
     if (nextAt > now) {
@@ -2547,29 +2556,58 @@ async function runRob(interaction) {
       result = { ok: false, reason: 'You need at least 100 coins to attempt a rob.' };
       return;
     }
+    const protectionCount = getRobProtectionCount(guildData, target.id);
+    if (protectionCount > 0) {
+      setRobProtectionCount(guildData, target.id, protectionCount - 1);
+      guildData.economy.robTargetAttempts[attemptsKey] = attempts + 1;
+      result = {
+        ok: true,
+        protected: true,
+        remainingProtection: protectionCount - 1,
+        attemptsLeft: 5 - (attempts + 1),
+      };
+      return;
+    }
     if (victim.coins < 100) {
       result = { ok: false, reason: `${target.username} does not have enough coins to rob.` };
       return;
     }
 
     guildData.economy.robCooldowns[interaction.user.id] = now + cooldownMs;
+    guildData.economy.robTargetAttempts[attemptsKey] = attempts + 1;
     const success = Math.random() < 0.45;
     if (success) {
       const stolen = Math.max(25, Math.min(1000, Math.floor(victim.coins * randomBetween(0.05, 0.15))));
       victim.coins = Math.max(0, victim.coins - stolen);
       robber.coins += stolen;
-      result = { ok: true, success: true, amount: stolen, balance: robber.coins };
+      result = { ok: true, success: true, amount: stolen, balance: robber.coins, attemptsLeft: 5 - (attempts + 1) };
       return;
     }
 
     const fine = Math.max(10, Math.min(500, Math.floor(robber.coins * randomBetween(0.05, 0.1))));
     robber.coins = Math.max(0, robber.coins - fine);
     victim.coins += fine;
-    result = { ok: true, success: false, amount: fine, balance: robber.coins };
+    result = { ok: true, success: false, amount: fine, balance: robber.coins, attemptsLeft: 5 - (attempts + 1) };
   });
 
   if (!result.ok) {
     await interaction.reply({ content: result.reason, ephemeral: true });
+    return true;
+  }
+
+  if (result.protected) {
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x5865f2)
+          .setTitle('Rob Blocked')
+          .setDescription(`${target}'s rob protection blocked ${interaction.user}. One protection stack was used.`)
+          .addFields(
+            { name: `${target.username}'s Protection Left`, value: `${result.remainingProtection} stack(s)`, inline: true },
+            { name: 'Your Attempts Left Today', value: String(result.attemptsLeft), inline: true },
+          ),
+      ],
+    });
     return true;
   }
 
@@ -2581,7 +2619,10 @@ async function runRob(interaction) {
         .setDescription(result.success
           ? `${interaction.user} stole **${result.amount} coins** from ${target}.`
           : `${interaction.user} got caught and paid **${result.amount} coins** to ${target}.`)
-        .addFields({ name: 'Your Balance', value: `${result.balance} coins`, inline: true }),
+        .addFields(
+          { name: 'Your Balance', value: `${result.balance} coins`, inline: true },
+          { name: 'Attempts Left Today', value: String(result.attemptsLeft), inline: true },
+        ),
     ],
   });
   return true;
@@ -2878,7 +2919,7 @@ function shopItems(guildData) {
 function shopPrivilegeLabel(privilege) {
   return {
     'public-room-rename': 'Rename public voice room',
-    'rob-protection': 'Rob protection',
+    'rob-protection': 'Rob protection stack',
   }[privilege] || privilege;
 }
 
@@ -3470,9 +3511,17 @@ async function buyShopItem(interaction, itemId) {
     if (item.type === 'privilege') {
       data.economy.privileges ||= {};
       data.economy.privileges[interaction.user.id] ||= {};
-      data.economy.privileges[interaction.user.id][item.privilege] = {
-        purchasedAt: Date.now(),
-      };
+      if (item.privilege === 'rob-protection') {
+        const current = getRobProtectionCount(data, interaction.user.id);
+        data.economy.privileges[interaction.user.id][item.privilege] = {
+          count: current + 1,
+          purchasedAt: Date.now(),
+        };
+      } else {
+        data.economy.privileges[interaction.user.id][item.privilege] = {
+          purchasedAt: Date.now(),
+        };
+      }
     }
     data.economy.shopPurchases ||= [];
     data.economy.shopPurchases.unshift({
@@ -3492,7 +3541,8 @@ async function buyShopItem(interaction, itemId) {
     reply += '\nYou can now rename your public join-to-create room when you create one.';
   }
   if (item.type === 'privilege' && item.privilege === 'rob-protection') {
-    reply += '\nYou are now protected from /rob attempts.';
+    const updatedData = await getGuildData(interaction.guildId);
+    reply += `\nYou now have **${getRobProtectionCount(updatedData, interaction.user.id)}** rob protection stack(s).`;
   }
 
   await interaction.reply({ content: `${reply}\nBalance: ${progress.coins} coins.`, ephemeral: true });
@@ -4342,8 +4392,34 @@ function trim(value, max) {
   return value.length > max ? `${value.slice(0, max - 3)}...` : value;
 }
 
-function hasEconomyPrivilegeInData(guildData, userId, privilege) {
-  return Boolean(guildData.economy?.privileges?.[userId]?.[privilege]);
+function getRobProtectionCount(guildData, userId) {
+  const item = guildData.economy?.privileges?.[userId]?.['rob-protection'];
+  if (!item) return 0;
+  if (typeof item.count === 'number') return Math.max(0, Math.floor(item.count));
+  return 1;
+}
+
+function setRobProtectionCount(guildData, userId, count) {
+  guildData.economy ||= {};
+  guildData.economy.privileges ||= {};
+  guildData.economy.privileges[userId] ||= {};
+  if (count <= 0) {
+    delete guildData.economy.privileges[userId]['rob-protection'];
+    return;
+  }
+  guildData.economy.privileges[userId]['rob-protection'] = {
+    count,
+    purchasedAt: guildData.economy.privileges[userId]['rob-protection']?.purchasedAt || Date.now(),
+  };
+}
+
+function cleanupOldRobTargetAttempts(guildData, today) {
+  const attempts = guildData.economy?.robTargetAttempts;
+  if (!attempts) return;
+  for (const key of Object.keys(attempts)) {
+    const day = Number(key.split(':').at(-1));
+    if (!Number.isFinite(day) || today - day > 3) delete attempts[key];
+  }
 }
 
 function formatMinutes(minutes) {
