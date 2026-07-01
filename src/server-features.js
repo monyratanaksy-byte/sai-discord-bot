@@ -8,6 +8,7 @@ import {
   ModalBuilder,
   PermissionFlagsBits,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
@@ -28,6 +29,7 @@ const editedMessages = new Map();
 const reminderTimers = new Map();
 const hiddenCommandDeletes = new Set();
 const recentMessageTimes = new Map();
+const casinoPoolRefreshTimes = new Map();
 
 export const featureCommands = [
   new SlashCommandBuilder()
@@ -353,6 +355,9 @@ export const featureCommands = [
     .setName('daily')
     .setDescription('Claim your daily coin reward.'),
   new SlashCommandBuilder()
+    .setName('streak')
+    .setDescription('Claim your daily streak coin reward.'),
+  new SlashCommandBuilder()
     .setName('gamble')
     .setDescription('Play coin gambling games with server coins.')
     .addSubcommand((sub) =>
@@ -389,7 +394,33 @@ export const featureCommands = [
         ),
     )
     .addSubcommand((sub) => sub.setName('stats').setDescription('Show your gambling stats.'))
-    .addSubcommand((sub) => sub.setName('leaderboard').setDescription('Show the gambling leaderboard.')),
+    .addSubcommand((sub) => sub.setName('leaderboard').setDescription('Show the gambling leaderboard.'))
+    .addSubcommand((sub) => sub.setName('pool').setDescription('Show the casino loss pool.'))
+    .addSubcommand((sub) =>
+      sub
+        .setName('setup-pool')
+        .setDescription('Set the channel that shows the casino loss pool.')
+        .addChannelOption((option) =>
+          option
+            .setName('channel')
+            .setDescription('Casino pool channel.')
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(true),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('giveaway')
+        .setDescription('Split the casino loss pool between random members.')
+        .addIntegerOption((option) =>
+          option
+            .setName('winners')
+            .setDescription('How many winners.')
+            .setRequired(true)
+            .setMinValue(1)
+            .setMaxValue(20),
+        ),
+    ),
   new SlashCommandBuilder()
     .setName('givecoins')
     .setDescription('Give coins to another member.')
@@ -636,6 +667,7 @@ export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'rank') return runRank(interaction);
   if (interaction.commandName === 'balance') return runBalance(interaction);
   if (interaction.commandName === 'daily') return runDaily(interaction);
+  if (interaction.commandName === 'streak') return runStreak(interaction);
   if (interaction.commandName === 'gamble') return runGamble(interaction);
   if (interaction.commandName === 'givecoins') return runGiveCoins(interaction);
   if (interaction.commandName === 'rate') return runRate(interaction);
@@ -666,6 +698,7 @@ export async function handleFeatureButton(interaction) {
   if (action === 'close_ticket') return closeTicket(interaction);
   if (action === 'poll') return votePoll(interaction, args[0], Number(args[1]));
   if (action === 'shop') return buyShopItem(interaction, args[0]);
+  if (action === 'shop-select') return buyShopItem(interaction, interaction.values?.[0]);
   return false;
 }
 
@@ -1829,10 +1862,63 @@ async function runDaily(interaction) {
   return true;
 }
 
+async function runStreak(interaction) {
+  const today = dayNumber();
+  let result;
+
+  await updateGuildData(interaction.guildId, (guildData) => {
+    guildData.economy.streaks ||= {};
+    const streak = guildData.economy.streaks[interaction.user.id] || { count: 0, lastDay: 0, best: 0 };
+
+    if (streak.lastDay === today) {
+      result = { ok: false, count: streak.count, nextAt: (today + 1) * 86_400_000 };
+      return;
+    }
+
+    streak.count = streak.lastDay === today - 1 ? streak.count + 1 : 1;
+    streak.lastDay = today;
+    streak.best = Math.max(streak.best || 0, streak.count);
+
+    const baseReward = Math.min(1000, 100 + (streak.count - 1) * 25);
+    const reward = applyRewardMultiplier(baseReward, rewardMultiplierForMember(interaction.member));
+    const progress = getUserProgress(guildData, interaction.user.id);
+    progress.coins += reward;
+    guildData.economy.streaks[interaction.user.id] = streak;
+    result = { ok: true, reward, count: streak.count, best: streak.best, balance: progress.coins };
+  });
+
+  if (!result.ok) {
+    await interaction.reply({
+      content: `You already claimed today's streak. Current streak: ${result.count} day(s). Try again <t:${Math.floor(result.nextAt / 1000)}:R>.`,
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setTitle('Daily Streak Claimed')
+        .setDescription(`You earned **${result.reward} coins**.`)
+        .addFields(
+          { name: 'Streak', value: `${result.count} day(s)`, inline: true },
+          { name: 'Best', value: `${result.best} day(s)`, inline: true },
+          { name: 'Balance', value: `${result.balance} coins`, inline: true },
+        ),
+    ],
+    ephemeral: true,
+  });
+  return true;
+}
+
 async function runGamble(interaction) {
   const sub = interaction.options.getSubcommand();
   if (sub === 'stats') return runGambleStats(interaction);
   if (sub === 'leaderboard') return runGambleLeaderboard(interaction);
+  if (sub === 'pool') return runCasinoPool(interaction);
+  if (sub === 'setup-pool') return runCasinoPoolSetup(interaction);
+  if (sub === 'giveaway') return runCasinoPoolGiveaway(interaction);
 
   const amount = interaction.options.getInteger('amount', true);
   if (amount < 10 || amount > 50_000) {
@@ -1866,8 +1952,16 @@ async function runGamble(interaction) {
     if (result.payout > amount) stats.wins += 1;
     else stats.losses += 1;
     stats.biggestWin = Math.max(stats.biggestWin, result.payout - amount);
+
+    const netLoss = Math.max(0, amount - result.payout);
+    if (netLoss > 0) {
+      guildData.economy.casinoLossPool = Number(guildData.economy.casinoLossPool || 0) + netLoss;
+      guildData.economy.casinoLifetimeLosses = Number(guildData.economy.casinoLifetimeLosses || 0) + netLoss;
+    }
+
     result.ok = true;
     result.balance = progress.coins;
+    result.pool = Number(guildData.economy.casinoLossPool || 0);
   });
 
   if (!result.ok) {
@@ -1877,6 +1971,9 @@ async function runGamble(interaction) {
 
   await interaction.reply({
     embeds: [gambleResultEmbed(interaction.user, result)],
+  });
+  await refreshCasinoPoolPanel(interaction.guild).catch((error) => {
+    console.error('Casino pool panel refresh failed:', error);
   });
   return true;
 }
@@ -1942,6 +2039,7 @@ function gambleResultEmbed(user, result) {
       { name: 'Payout', value: `${result.payout} coins`, inline: true },
       { name: profit >= 0 ? 'Profit' : 'Loss', value: `${profit >= 0 ? '+' : ''}${profit} coins`, inline: true },
       { name: 'Balance', value: `${result.balance} coins`, inline: true },
+      { name: 'Casino Pool', value: `${result.pool || 0} coins`, inline: true },
     )
     .setFooter({ text: `${user.username}'s gamble` })
     .setTimestamp();
@@ -1985,6 +2083,119 @@ async function runGambleLeaderboard(interaction) {
         .setDescription(rows.join('\n') || 'No gambling stats yet.'),
     ],
   });
+  return true;
+}
+
+async function runCasinoPool(interaction) {
+  const guildData = await getGuildData(interaction.guildId);
+  await interaction.reply({
+    embeds: [casinoPoolEmbed(interaction.guild, guildData)],
+    ephemeral: true,
+  });
+  return true;
+}
+
+async function runCasinoPoolSetup(interaction) {
+  if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
+    return true;
+  }
+
+  const channel = interaction.options.getChannel('channel', true);
+  await updateGuildData(interaction.guildId, (data) => {
+    data.config.casinoPoolChannelId = channel.id;
+    data.config.casinoPoolMessageId = null;
+  });
+  await refreshCasinoPoolPanel(interaction.guild, { force: true });
+  await interaction.reply({ content: `Casino loss pool panel is set up in ${channel}.`, ephemeral: true });
+  return true;
+}
+
+async function runCasinoPoolGiveaway(interaction) {
+  if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
+    return true;
+  }
+
+  const requestedWinners = interaction.options.getInteger('winners', true);
+  await interaction.deferReply({ ephemeral: true });
+
+  const members = await interaction.guild.members.fetch({ force: true }).catch((error) => {
+    console.error('Casino giveaway member fetch failed:', error);
+    return null;
+  });
+  if (!members) {
+    await interaction.editReply('Could not fetch members for the giveaway.');
+    return true;
+  }
+
+  let result;
+  await updateGuildData(interaction.guildId, (guildData) => {
+    const pool = Number(guildData.economy.casinoLossPool || 0);
+    if (pool < 1) {
+      result = { ok: false, reason: 'The casino loss pool is empty.' };
+      return;
+    }
+
+    const eligibleIds = members
+      .filter((member) => !member.user.bot)
+      .map((member) => member.id);
+    const winners = pickRandomItems(eligibleIds, Math.min(requestedWinners, eligibleIds.length));
+    if (!winners.length) {
+      result = { ok: false, reason: 'No eligible non-bot members were found.' };
+      return;
+    }
+
+    const prizeEach = Math.floor(pool / winners.length);
+    if (prizeEach < 1) {
+      result = { ok: false, reason: 'The pool is too small to split between that many winners.' };
+      return;
+    }
+
+    const totalPaid = prizeEach * winners.length;
+    for (const userId of winners) {
+      const progress = getUserProgress(guildData, userId);
+      progress.coins += prizeEach;
+    }
+
+    guildData.economy.casinoLossPool = Math.max(0, pool - totalPaid);
+    guildData.economy.casinoGiveaways ||= [];
+    guildData.economy.casinoGiveaways.unshift({
+      id: crypto.randomUUID(),
+      by: interaction.user.id,
+      winners,
+      prizeEach,
+      totalPaid,
+      at: Date.now(),
+    });
+    guildData.economy.casinoGiveaways.splice(50);
+    result = { ok: true, winners, prizeEach, totalPaid, remaining: guildData.economy.casinoLossPool };
+  });
+
+  if (!result.ok) {
+    await interaction.editReply(result.reason);
+    return true;
+  }
+
+  const winnerText = result.winners.map((userId) => `<@${userId}>`).join(', ');
+  const embed = new EmbedBuilder()
+    .setColor(0x57f287)
+    .setTitle('Casino Pool Giveaway')
+    .setDescription(`${winnerText}\n\nEach winner received **${result.prizeEach} coins**.`)
+    .addFields(
+      { name: 'Total Paid', value: `${result.totalPaid} coins`, inline: true },
+      { name: 'Pool Left', value: `${result.remaining} coins`, inline: true },
+    )
+    .setFooter({ text: `Started by ${interaction.user.username}` })
+    .setTimestamp();
+
+  const guildData = await getGuildData(interaction.guildId);
+  const channel = guildData.config.casinoPoolChannelId
+    ? await interaction.guild.channels.fetch(guildData.config.casinoPoolChannelId).catch(() => null)
+    : interaction.channel;
+  await channel?.send?.({ embeds: [embed], allowedMentions: { users: result.winners } }).catch(() => {});
+  await refreshCasinoPoolPanel(interaction.guild, { force: true });
+  await interaction.editReply(`Casino giveaway complete. ${result.winners.length} winner(s), ${result.prizeEach} coins each.`);
   return true;
 }
 
@@ -2257,7 +2468,7 @@ async function runShop(interaction) {
       return true;
     }
     await updateGuildData(interaction.guildId, (data) => {
-      data.shops[role.id] = { id: role.id, type: 'role', roleId: role.id, price };
+      data.shops[role.id] = { id: role.id, type: 'role', roleId: role.id, roleName: role.name, price };
     });
     await refreshShopPanel(interaction.guild);
     await interaction.reply({ content: `${role} added to the shop for ${price} coins.`, ephemeral: true });
@@ -2300,7 +2511,7 @@ async function runShop(interaction) {
   }
 
   await interaction.reply({
-    ...shopPanelPayload(guildData),
+    ...shopPanelPayload(guildData, interaction.guild),
     ephemeral: true,
   });
   return true;
@@ -2319,31 +2530,81 @@ function shopPrivilegeLabel(privilege) {
   }[privilege] || privilege;
 }
 
-function shopItemLine(item) {
-  if (item.type === 'role') return `<@&${item.roleId}> - **${item.price}** coins`;
-  return `✨ **${shopPrivilegeLabel(item.privilege)}** - **${item.price}** coins`;
+function shopItemLabel(item) {
+  if (item.type === 'role') return `Role: ${item.roleName || item.roleId}`;
+  return `Perk: ${shopPrivilegeLabel(item.privilege)}`;
 }
 
-function shopPanelPayload(guildData) {
-  const items = shopItems(guildData).slice(0, 25);
+function shopItemLine(item, index) {
+  const prefix = item.type === 'role' ? '🎭' : '✨';
+  const name = item.type === 'role' ? `<@&${item.roleId}>` : `**${shopPrivilegeLabel(item.privilege)}**`;
+  return `${index + 1}. ${prefix} ${name}\nPrice: **${item.price}** coins`;
+}
+
+function shopFieldValue(items, emptyText) {
+  if (!items.length) return emptyText;
+  const lines = [];
+  let totalLength = 0;
+  for (let index = 0; index < items.length; index += 1) {
+    const line = shopItemLine(items[index], index);
+    if (totalLength + line.length + 2 > 950) {
+      lines.push(`...and ${items.length - index} more. Use /shop view if needed.`);
+      break;
+    }
+    lines.push(line);
+    totalLength += line.length + 2;
+  }
+  return lines.join('\n\n');
+}
+
+function shopPanelPayload(guildData, guild = null) {
+  const roles = shopItems(guildData).filter((item) => item.type === 'role').slice(0, 25);
+  const perks = shopItems(guildData).filter((item) => item.type === 'privilege').slice(0, 25);
   const embed = new EmbedBuilder()
     .setColor(0xf1c40f)
-    .setTitle('S.A.I Coin Shop')
-    .setDescription(
-      items.length
-        ? items.map(shopItemLine).join('\n')
-        : 'The shop is empty right now.',
+    .setTitle(`${guild?.name || 'S.A.I'} Coin Shop`)
+    .setDescription('Spend the coins you earn from chat, VC, daily rewards, streaks, and events.')
+    .addFields(
+      {
+        name: 'Roles',
+        value: shopFieldValue(roles, 'No roles for sale right now.'),
+        inline: true,
+      },
+      {
+        name: 'Perks',
+        value: shopFieldValue(perks, 'No perks for sale right now.'),
+        inline: true,
+      },
     )
-    .setFooter({ text: 'Earn coins from activity, daily rewards, and VC.' })
+    .setFooter({ text: 'Use the menus below to buy. Purchases are private.' })
     .setTimestamp();
 
   const rows = [];
-  for (let index = 0; index < Math.min(items.length, 25); index += 5) {
+  if (roles.length) {
     rows.push(
       new ActionRowBuilder().addComponents(
-        items.slice(index, index + 5).map((item) =>
-          button(`feature:shop:${item.id}`, item.type === 'role' ? `Buy Role ${item.price}` : `Buy Perk ${item.price}`, ButtonStyle.Success),
-        ),
+        new StringSelectMenuBuilder()
+          .setCustomId('feature:shop-select:role')
+          .setPlaceholder('Buy a role')
+          .addOptions(roles.map((item) => ({
+            label: truncateText(shopItemLabel(item), 100),
+            description: `${item.price} coins`,
+            value: item.id,
+          }))),
+      ),
+    );
+  }
+  if (perks.length) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId('feature:shop-select:perk')
+          .setPlaceholder('Buy a perk')
+          .addOptions(perks.map((item) => ({
+            label: truncateText(shopItemLabel(item), 100),
+            description: `${item.price} coins`,
+            value: item.id,
+          }))),
       ),
     );
   }
@@ -2363,7 +2624,7 @@ async function refreshShopPanel(guild) {
   const channel = await guild.channels.fetch(guildData.config.shopChannelId).catch(() => null);
   if (!channel?.isTextBased()) return false;
 
-  const payload = shopPanelPayload(guildData);
+  const payload = shopPanelPayload(guildData, guild);
   let message = guildData.config.shopMessageId
     ? await channel.messages.fetch(guildData.config.shopMessageId).catch(() => null)
     : null;
@@ -2382,6 +2643,81 @@ async function refreshShopPanel(guild) {
   }
 
   return true;
+}
+
+function casinoPoolEmbed(guild, guildData) {
+  const pool = Number(guildData.economy?.casinoLossPool || 0);
+  const lifetime = Number(guildData.economy?.casinoLifetimeLosses || 0);
+  const lastGiveaway = guildData.economy?.casinoGiveaways?.[0];
+  return new EmbedBuilder()
+    .setColor(0xf1c40f)
+    .setTitle(`${guild?.name || 'S.A.I'} Casino Pool`)
+    .setDescription('Coins lost to gambling are tracked here. Staff can split this pool into a giveaway.')
+    .addFields(
+      { name: 'Current Pool', value: `**${pool}** coins`, inline: true },
+      { name: 'Lifetime Losses', value: `${lifetime} coins`, inline: true },
+      {
+        name: 'Last Giveaway',
+        value: lastGiveaway
+          ? `<t:${Math.floor(lastGiveaway.at / 1000)}:R> • ${lastGiveaway.winners.length} winner(s) • ${lastGiveaway.prizeEach} each`
+          : 'No giveaway yet.',
+        inline: false,
+      },
+    )
+    .setFooter({ text: 'Pool panel refreshes at most once every 5 minutes while gambling is active.' })
+    .setTimestamp();
+}
+
+async function refreshCasinoPoolPanel(guild, options = {}) {
+  const guildData = await getGuildData(guild.id);
+  if (!guildData.config.casinoPoolChannelId) return false;
+
+  const now = Date.now();
+  const lastRefresh = casinoPoolRefreshTimes.get(guild.id) || 0;
+  if (!options.force && now - lastRefresh < 5 * 60_000) return false;
+  casinoPoolRefreshTimes.set(guild.id, now);
+
+  const channel = await guild.channels.fetch(guildData.config.casinoPoolChannelId).catch(() => null);
+  if (!channel?.isTextBased()) return false;
+
+  const payload = { embeds: [casinoPoolEmbed(guild, guildData)], allowedMentions: { parse: [] } };
+  let message = guildData.config.casinoPoolMessageId
+    ? await channel.messages.fetch(guildData.config.casinoPoolMessageId).catch(() => null)
+    : null;
+
+  if (message) {
+    await message.edit(payload).catch(() => {
+      message = null;
+    });
+  }
+
+  if (!message) {
+    const sent = await channel.send(payload);
+    await updateGuildData(guild.id, (data) => {
+      data.config.casinoPoolMessageId = sent.id;
+    });
+  }
+
+  return true;
+}
+
+function pickRandomItems(items, count) {
+  const pool = [...items];
+  const picked = [];
+  while (pool.length && picked.length < count) {
+    const index = Math.floor(Math.random() * pool.length);
+    picked.push(pool.splice(index, 1)[0]);
+  }
+  return picked;
+}
+
+function dayNumber(time = Date.now()) {
+  return Math.floor(time / 86_400_000);
+}
+
+function truncateText(text, maxLength) {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 async function runEmoji(interaction) {

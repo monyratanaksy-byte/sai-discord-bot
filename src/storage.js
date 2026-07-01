@@ -88,6 +88,8 @@ export function createGuildData() {
       activityChannelId: null,
       shopChannelId: null,
       shopMessageId: null,
+      casinoPoolChannelId: null,
+      casinoPoolMessageId: null,
       automodEnabled: false,
       automodInviteLinks: true,
       automodMassMentions: true,

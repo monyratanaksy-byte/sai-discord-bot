@@ -153,7 +153,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    if (interaction.isButton() && interaction.customId.startsWith('feature:')) {
+    if ((interaction.isButton() || interaction.isStringSelectMenu()) && interaction.customId.startsWith('feature:')) {
       await handleFeatureButton(interaction);
       return;
     }
