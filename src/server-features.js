@@ -411,7 +411,7 @@ export const featureCommands = [
     .addSubcommand((sub) =>
       sub
         .setName('giveaway')
-        .setDescription('Split the casino loss pool between random members.')
+        .setDescription('Start a casino pool giveaway that members can enter.')
         .addIntegerOption((option) =>
           option
             .setName('winners')
@@ -420,12 +420,21 @@ export const featureCommands = [
             .setMinValue(1)
             .setMaxValue(20),
         ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('draw')
+        .setDescription('Draw winners from the active casino pool giveaway.'),
     ),
   new SlashCommandBuilder()
     .setName('givecoins')
     .setDescription('Give coins to another member.')
     .addUserOption((option) => option.setName('user').setDescription('User.').setRequired(true))
     .addIntegerOption((option) => option.setName('amount').setDescription('Coins to give.').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('rob')
+    .setDescription('Try to rob coins from another member.')
+    .addUserOption((option) => option.setName('user').setDescription('Member to rob.').setRequired(true)),
   new SlashCommandBuilder()
     .setName('rate')
     .setDescription('Show how fast you earn XP and coins.'),
@@ -670,6 +679,7 @@ export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'streak') return runStreak(interaction);
   if (interaction.commandName === 'gamble') return runGamble(interaction);
   if (interaction.commandName === 'givecoins') return runGiveCoins(interaction);
+  if (interaction.commandName === 'rob') return runRob(interaction);
   if (interaction.commandName === 'rate') return runRate(interaction);
   if (interaction.commandName === 'activity') return runActivity(interaction);
   if (interaction.commandName === 'vcleaderboard') return runVoiceLeaderboard(interaction);
@@ -699,6 +709,7 @@ export async function handleFeatureButton(interaction) {
   if (action === 'poll') return votePoll(interaction, args[0], Number(args[1]));
   if (action === 'shop') return buyShopItem(interaction, args[0]);
   if (action === 'shop-select') return buyShopItem(interaction, interaction.values?.[0]);
+  if (action === 'casino-enter') return enterCasinoGiveaway(interaction, args[0]);
   return false;
 }
 
@@ -1919,6 +1930,7 @@ async function runGamble(interaction) {
   if (sub === 'pool') return runCasinoPool(interaction);
   if (sub === 'setup-pool') return runCasinoPoolSetup(interaction);
   if (sub === 'giveaway') return runCasinoPoolGiveaway(interaction);
+  if (sub === 'draw') return runCasinoPoolDraw(interaction);
 
   const amount = interaction.options.getInteger('amount', true);
   if (amount < 10 || amount > 50_000) {
@@ -2120,15 +2132,7 @@ async function runCasinoPoolGiveaway(interaction) {
   const requestedWinners = interaction.options.getInteger('winners', true);
   await interaction.deferReply({ ephemeral: true });
 
-  const members = await interaction.guild.members.fetch({ force: true }).catch((error) => {
-    console.error('Casino giveaway member fetch failed:', error);
-    return null;
-  });
-  if (!members) {
-    await interaction.editReply('Could not fetch members for the giveaway.');
-    return true;
-  }
-
+  const giveawayId = crypto.randomUUID();
   let result;
   await updateGuildData(interaction.guildId, (guildData) => {
     const pool = Number(guildData.economy.casinoLossPool || 0);
@@ -2137,39 +2141,118 @@ async function runCasinoPoolGiveaway(interaction) {
       return;
     }
 
-    const eligibleIds = members
-      .filter((member) => !member.user.bot)
-      .map((member) => member.id);
-    const winners = pickRandomItems(eligibleIds, Math.min(requestedWinners, eligibleIds.length));
-    if (!winners.length) {
-      result = { ok: false, reason: 'No eligible non-bot members were found.' };
+    guildData.economy.casinoActiveGiveaway = {
+      id: giveawayId,
+      by: interaction.user.id,
+      winners: requestedWinners,
+      poolAtStart: pool,
+      entries: [],
+      startedAt: Date.now(),
+    };
+    result = { ok: true, pool, winners: requestedWinners };
+  });
+
+  if (!result.ok) {
+    await interaction.editReply(result.reason);
+    return true;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0xf1c40f)
+    .setTitle('Casino Pool Giveaway')
+    .setDescription('Click **Join Giveaway** to enter. Staff will draw winners from the entered users.')
+    .addFields(
+      { name: 'Prize Pool', value: `${result.pool} coins`, inline: true },
+      { name: 'Winners', value: String(result.winners), inline: true },
+      { name: 'Entries', value: '0', inline: true },
+    )
+    .setFooter({ text: `Started by ${interaction.user.username}` })
+    .setTimestamp();
+
+  const guildData = await getGuildData(interaction.guildId);
+  const channel = guildData.config.casinoPoolChannelId
+    ? await interaction.guild.channels.fetch(guildData.config.casinoPoolChannelId).catch(() => null)
+    : interaction.channel;
+  const message = await channel?.send?.({
+    embeds: [embed],
+    components: [new ActionRowBuilder().addComponents(button(`feature:casino-enter:${giveawayId}`, 'Join Giveaway', ButtonStyle.Success))],
+    allowedMentions: { parse: [] },
+  }).catch(() => null);
+
+  if (message) {
+    await updateGuildData(interaction.guildId, (data) => {
+      if (data.economy.casinoActiveGiveaway?.id === giveawayId) {
+        data.economy.casinoActiveGiveaway.channelId = message.channel.id;
+        data.economy.casinoActiveGiveaway.messageId = message.id;
+      }
+    });
+  }
+
+  await interaction.editReply(message ? `Casino giveaway started in ${channel}. Use /gamble draw when ready.` : 'Could not post the giveaway panel.');
+  return true;
+}
+
+async function runCasinoPoolDraw(interaction) {
+  if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
+    return true;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  let result;
+  await updateGuildData(interaction.guildId, (guildData) => {
+    const active = guildData.economy.casinoActiveGiveaway;
+    if (!active) {
+      result = { ok: false, reason: 'There is no active casino giveaway.' };
       return;
     }
 
+    const entries = [...new Set(active.entries || [])];
+    if (!entries.length) {
+      result = { ok: false, reason: 'No one entered the active giveaway yet.' };
+      return;
+    }
+
+    const pool = Number(guildData.economy.casinoLossPool || 0);
+    if (pool < 1) {
+      result = { ok: false, reason: 'The casino loss pool is empty.' };
+      return;
+    }
+
+    const winners = pickRandomItems(entries, Math.min(active.winners || 1, entries.length));
     const prizeEach = Math.floor(pool / winners.length);
     if (prizeEach < 1) {
-      result = { ok: false, reason: 'The pool is too small to split between that many winners.' };
+      result = { ok: false, reason: 'The pool is too small to split between the winners.' };
       return;
     }
 
     const totalPaid = prizeEach * winners.length;
     for (const userId of winners) {
-      const progress = getUserProgress(guildData, userId);
-      progress.coins += prizeEach;
+      getUserProgress(guildData, userId).coins += prizeEach;
     }
 
     guildData.economy.casinoLossPool = Math.max(0, pool - totalPaid);
     guildData.economy.casinoGiveaways ||= [];
     guildData.economy.casinoGiveaways.unshift({
-      id: crypto.randomUUID(),
+      id: active.id,
       by: interaction.user.id,
       winners,
+      entries,
       prizeEach,
       totalPaid,
       at: Date.now(),
     });
     guildData.economy.casinoGiveaways.splice(50);
-    result = { ok: true, winners, prizeEach, totalPaid, remaining: guildData.economy.casinoLossPool };
+    delete guildData.economy.casinoActiveGiveaway;
+    result = {
+      ok: true,
+      active,
+      winners,
+      entries: entries.length,
+      prizeEach,
+      totalPaid,
+      remaining: guildData.economy.casinoLossPool,
+    };
   });
 
   if (!result.ok) {
@@ -2180,22 +2263,63 @@ async function runCasinoPoolGiveaway(interaction) {
   const winnerText = result.winners.map((userId) => `<@${userId}>`).join(', ');
   const embed = new EmbedBuilder()
     .setColor(0x57f287)
-    .setTitle('Casino Pool Giveaway')
+    .setTitle('Casino Pool Giveaway Winners')
     .setDescription(`${winnerText}\n\nEach winner received **${result.prizeEach} coins**.`)
     .addFields(
+      { name: 'Entries', value: String(result.entries), inline: true },
       { name: 'Total Paid', value: `${result.totalPaid} coins`, inline: true },
       { name: 'Pool Left', value: `${result.remaining} coins`, inline: true },
     )
-    .setFooter({ text: `Started by ${interaction.user.username}` })
     .setTimestamp();
 
-  const guildData = await getGuildData(interaction.guildId);
-  const channel = guildData.config.casinoPoolChannelId
-    ? await interaction.guild.channels.fetch(guildData.config.casinoPoolChannelId).catch(() => null)
+  const channel = result.active.channelId
+    ? await interaction.guild.channels.fetch(result.active.channelId).catch(() => null)
     : interaction.channel;
   await channel?.send?.({ embeds: [embed], allowedMentions: { users: result.winners } }).catch(() => {});
+  if (result.active.channelId && result.active.messageId) {
+    const message = await channel?.messages?.fetch(result.active.messageId).catch(() => null);
+    await message?.edit({ components: [] }).catch(() => {});
+  }
   await refreshCasinoPoolPanel(interaction.guild, { force: true });
-  await interaction.editReply(`Casino giveaway complete. ${result.winners.length} winner(s), ${result.prizeEach} coins each.`);
+  await interaction.editReply(`Drew ${result.winners.length} winner(s), ${result.prizeEach} coins each.`);
+  return true;
+}
+
+async function enterCasinoGiveaway(interaction, giveawayId) {
+  let result;
+  await updateGuildData(interaction.guildId, (guildData) => {
+    const active = guildData.economy.casinoActiveGiveaway;
+    if (!active || active.id !== giveawayId) {
+      result = { ok: false, reason: 'That giveaway is no longer active.' };
+      return;
+    }
+
+    active.entries ||= [];
+    if (active.entries.includes(interaction.user.id)) {
+      result = { ok: true, already: true, entries: active.entries.length, active };
+      return;
+    }
+
+    active.entries.push(interaction.user.id);
+    result = { ok: true, already: false, entries: active.entries.length, active };
+  });
+
+  if (!result.ok) {
+    await interaction.reply({ content: result.reason, ephemeral: true });
+    return true;
+  }
+
+  const embed = EmbedBuilder.from(interaction.message.embeds[0] || new EmbedBuilder())
+    .setFields(
+      { name: 'Prize Pool', value: `${result.active.poolAtStart} coins`, inline: true },
+      { name: 'Winners', value: String(result.active.winners), inline: true },
+      { name: 'Entries', value: String(result.entries), inline: true },
+    );
+  await interaction.message.edit({ embeds: [embed] }).catch(() => {});
+  await interaction.reply({
+    content: result.already ? 'You are already entered.' : 'You joined the casino pool giveaway.',
+    ephemeral: true,
+  });
   return true;
 }
 
@@ -2232,6 +2356,70 @@ async function runGiveCoins(interaction) {
   await interaction.reply({
     content: `Sent ${amount} coins to ${target}. Your balance is now ${result.balance} coins.`,
     ephemeral: true,
+  });
+  return true;
+}
+
+async function runRob(interaction) {
+  const target = interaction.options.getUser('user', true);
+  if (target.bot || target.id === interaction.user.id) {
+    await interaction.reply({ content: 'Choose another non-bot member.', ephemeral: true });
+    return true;
+  }
+
+  const now = Date.now();
+  const cooldownMs = 60 * 60_000;
+  let result;
+  await updateGuildData(interaction.guildId, (guildData) => {
+    guildData.economy.robCooldowns ||= {};
+    const nextAt = Number(guildData.economy.robCooldowns[interaction.user.id] || 0);
+    const robber = getUserProgress(guildData, interaction.user.id);
+    const victim = getUserProgress(guildData, target.id);
+
+    if (nextAt > now) {
+      result = { ok: false, reason: `You can rob again <t:${Math.floor(nextAt / 1000)}:R>.` };
+      return;
+    }
+    if (robber.coins < 100) {
+      result = { ok: false, reason: 'You need at least 100 coins to attempt a rob.' };
+      return;
+    }
+    if (victim.coins < 100) {
+      result = { ok: false, reason: `${target.username} does not have enough coins to rob.` };
+      return;
+    }
+
+    guildData.economy.robCooldowns[interaction.user.id] = now + cooldownMs;
+    const success = Math.random() < 0.45;
+    if (success) {
+      const stolen = Math.max(25, Math.min(1000, Math.floor(victim.coins * randomBetween(0.05, 0.15))));
+      victim.coins = Math.max(0, victim.coins - stolen);
+      robber.coins += stolen;
+      result = { ok: true, success: true, amount: stolen, balance: robber.coins };
+      return;
+    }
+
+    const fine = Math.max(10, Math.min(500, Math.floor(robber.coins * randomBetween(0.05, 0.1))));
+    robber.coins = Math.max(0, robber.coins - fine);
+    victim.coins += fine;
+    result = { ok: true, success: false, amount: fine, balance: robber.coins };
+  });
+
+  if (!result.ok) {
+    await interaction.reply({ content: result.reason, ephemeral: true });
+    return true;
+  }
+
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(result.success ? 0x57f287 : 0xed4245)
+        .setTitle(result.success ? 'Robbery Successful' : 'Robbery Failed')
+        .setDescription(result.success
+          ? `${interaction.user} stole **${result.amount} coins** from ${target}.`
+          : `${interaction.user} got caught and paid **${result.amount} coins** to ${target}.`)
+        .addFields({ name: 'Your Balance', value: `${result.balance} coins`, inline: true }),
+    ],
   });
   return true;
 }
@@ -2530,6 +2718,14 @@ function shopPrivilegeLabel(privilege) {
   }[privilege] || privilege;
 }
 
+function shopDisplayItems(guildData, guild) {
+  return shopItems(guildData).map((item) => {
+    if (item.type !== 'role') return item;
+    const role = guild?.roles?.cache?.get(item.roleId);
+    return { ...item, roleName: role?.name || item.roleName || item.roleId };
+  });
+}
+
 function shopItemLabel(item) {
   if (item.type === 'role') return `Role: ${item.roleName || item.roleId}`;
   return `Perk: ${shopPrivilegeLabel(item.privilege)}`;
@@ -2558,8 +2754,9 @@ function shopFieldValue(items, emptyText) {
 }
 
 function shopPanelPayload(guildData, guild = null) {
-  const roles = shopItems(guildData).filter((item) => item.type === 'role').slice(0, 25);
-  const perks = shopItems(guildData).filter((item) => item.type === 'privilege').slice(0, 25);
+  const displayItems = shopDisplayItems(guildData, guild);
+  const roles = displayItems.filter((item) => item.type === 'role').slice(0, 25);
+  const perks = displayItems.filter((item) => item.type === 'privilege').slice(0, 25);
   const embed = new EmbedBuilder()
     .setColor(0xf1c40f)
     .setTitle(`${guild?.name || 'S.A.I'} Coin Shop`)
@@ -2709,6 +2906,10 @@ function pickRandomItems(items, count) {
     picked.push(pool.splice(index, 1)[0]);
   }
   return picked;
+}
+
+function randomBetween(min, max) {
+  return min + Math.random() * (max - min);
 }
 
 function dayNumber(time = Date.now()) {
