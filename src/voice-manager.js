@@ -21,6 +21,7 @@ const roomNameCooldowns = new Map();
 const roomEmojiPool = ['🌸', '☁️', '✨', '🌷', '🫧', '⭐', '🍓', '🌙', '🧸', '🎧'];
 const standardRoomPrefix = '🌿 Lounge';
 const roomNameCooldownMs = 90_000;
+const modalVoiceButtonIds = new Set(['voice_rename', 'voice_limit']);
 
 export const voiceCommands = [
   new SlashCommandBuilder()
@@ -207,12 +208,13 @@ export async function handleVoiceStateUpdate(oldState, newState) {
 
 export async function handleVoiceButton(interaction) {
   try {
+    if (!modalVoiceButtonIds.has(interaction.customId)) {
+      await ensureVoiceDeferred(interaction);
+    }
+
     const room = await getRoomForInteraction(interaction);
     if (!room) {
-      await interaction.reply({
-        content: 'This control panel is no longer connected to an active S.A.I voice room. Create a new room to get a fresh panel.',
-        ephemeral: true,
-      });
+      await respondVoice(interaction, 'This control panel is no longer connected to an active S.A.I voice room. Create a new room to get a fresh panel.');
       return;
     }
 
@@ -223,10 +225,7 @@ export async function handleVoiceButton(interaction) {
 
     if (interaction.customId === 'voice_coowner') {
       if (interaction.user.id !== room.ownerId) {
-        await interaction.reply({
-          content: 'Only the room owner can choose a co-owner.',
-          ephemeral: true,
-        });
+        await respondVoice(interaction, 'Only the room owner can choose a co-owner.');
         return;
       }
       await showCoOwnerPicker(interaction, room);
@@ -234,15 +233,11 @@ export async function handleVoiceButton(interaction) {
     }
 
     if (!(await isRoomManager(interaction, room))) {
-      await interaction.reply({
-        content: 'Only the room owner or co-owner can use this control.',
-        ephemeral: true,
-      });
+      await respondVoice(interaction, 'Only the room owner or co-owner can use this control.');
       return;
     }
 
   if (interaction.customId === 'voice_lock') {
-    await interaction.deferReply({ ephemeral: true });
     await room.channel.permissionOverwrites.edit(interaction.guild.id, {
       Connect: false,
     });
@@ -251,7 +246,6 @@ export async function handleVoiceButton(interaction) {
   }
 
   if (interaction.customId === 'voice_unlock') {
-    await interaction.deferReply({ ephemeral: true });
     await room.channel.permissionOverwrites.edit(interaction.guild.id, {
       Connect: null,
     });
@@ -260,7 +254,6 @@ export async function handleVoiceButton(interaction) {
   }
 
   if (interaction.customId === 'voice_hide') {
-    await interaction.deferReply({ ephemeral: true });
     await room.channel.permissionOverwrites.edit(interaction.guild.id, {
       ViewChannel: false,
     });
@@ -269,7 +262,6 @@ export async function handleVoiceButton(interaction) {
   }
 
   if (interaction.customId === 'voice_show') {
-    await interaction.deferReply({ ephemeral: true });
     await room.channel.permissionOverwrites.edit(interaction.guild.id, {
       ViewChannel: null,
     });
@@ -278,7 +270,6 @@ export async function handleVoiceButton(interaction) {
   }
 
   if (interaction.customId === 'voice_delete') {
-    await interaction.deferReply({ ephemeral: true });
     temporaryRooms.delete(room.channel.id);
     await interaction.editReply('Deleting your room.');
     await room.channel.delete('S.A.I room owner deleted the temporary room.');
@@ -287,10 +278,7 @@ export async function handleVoiceButton(interaction) {
 
   if (interaction.customId === 'voice_rename') {
     if (!room.isBoosterRoom && !(await hasRoomPrivilege(interaction.guild.id, interaction.user.id, 'public-room-rename'))) {
-      await interaction.reply({
-        content: 'Buy the public room rename perk from the shop to rename public rooms.',
-        ephemeral: true,
-      });
+      await respondVoice(interaction, 'Buy the public room rename perk from the shop to rename public rooms.');
       return;
     }
 
@@ -613,6 +601,28 @@ async function replyVoiceFailure(interaction) {
   } else {
     await interaction.reply(payload).catch(() => {});
   }
+}
+
+async function ensureVoiceDeferred(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ ephemeral: true });
+  }
+}
+
+async function respondVoice(interaction, contentOrPayload) {
+  const payload = typeof contentOrPayload === 'string'
+    ? { content: contentOrPayload }
+    : { ...contentOrPayload };
+  payload.allowedMentions ||= { parse: [] };
+
+  if (interaction.deferred || interaction.replied) {
+    await interaction.editReply(payload).catch(async () => {
+      await interaction.followUp({ ...payload, ephemeral: true }).catch(() => {});
+    });
+    return;
+  }
+
+  await interaction.reply({ ...payload, ephemeral: true });
 }
 
 async function permitMember(room, member) {
@@ -984,10 +994,7 @@ async function showInvitePicker(interaction, room) {
 
 async function showCoOwnerPicker(interaction, room) {
   if (!room.isBoosterRoom) {
-    await interaction.reply({
-      content: 'Co-owner is a booster room perk.',
-      ephemeral: true,
-    });
+    await respondVoice(interaction, 'Co-owner is a booster room perk.');
     return;
   }
 
@@ -1040,10 +1047,7 @@ async function showTransferPicker(interaction, room) {
     .first(25);
 
   if (members.length === 0) {
-    await interaction.reply({
-      content: 'There is nobody else in this room to transfer ownership to.',
-      ephemeral: true,
-    });
+    await respondVoice(interaction, 'There is nobody else in this room to transfer ownership to.');
     return;
   }
 
@@ -1085,10 +1089,7 @@ async function showKickPicker(interaction, room) {
     .first(25);
 
   if (members.length === 0) {
-    await interaction.reply({
-      content: 'There is nobody else in this room to kick.',
-      ephemeral: true,
-    });
+    await respondVoice(interaction, 'There is nobody else in this room to kick.');
     return;
   }
 
@@ -1167,7 +1168,7 @@ async function getRoomForInteraction(interaction) {
 async function getRoomById(guild, channelId) {
   const cached = temporaryRooms.get(channelId);
   if (cached) {
-    const channel = await guild.channels.fetch(channelId).catch(() => null);
+    const channel = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
     if (channel) {
       cached.channel = channel;
       return cached;
@@ -1184,7 +1185,7 @@ async function getRoomById(guild, channelId) {
   const saved = guildData.voiceRooms[channelId];
   if (!saved) return null;
 
-  const channel = await guild.channels.fetch(channelId).catch(() => null);
+  const channel = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
   if (!channel) {
     await updateGuildData(guild.id, (data) => {
       delete data.voiceRooms[channelId];
@@ -1207,32 +1208,26 @@ async function getRoomById(guild, channelId) {
 async function isRoomOwner(interaction, room) {
   if (interaction.user.id === room.ownerId) return true;
 
-  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  const member = interaction.member || await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
   return member?.permissions.has(PermissionFlagsBits.Administrator) || false;
 }
 
 async function isRoomManager(interaction, room) {
   if (interaction.user.id === room.ownerId || interaction.user.id === room.coOwnerId) return true;
 
-  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  const member = interaction.member || await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
   return member?.permissions.has(PermissionFlagsBits.Administrator) || false;
 }
 
 async function claimRoom(interaction, room) {
   const ownerStillInside = room.channel.members.has(room.ownerId);
   if (ownerStillInside) {
-    await interaction.reply({
-      content: 'The current owner is still inside the room.',
-      ephemeral: true,
-    });
+    await respondVoice(interaction, 'The current owner is still inside the room.');
     return;
   }
 
   if (!room.channel.members.has(interaction.user.id)) {
-    await interaction.reply({
-      content: 'Join this voice room first, then claim it.',
-      ephemeral: true,
-    });
+    await respondVoice(interaction, 'Join this voice room first, then claim it.');
     return;
   }
 
@@ -1248,8 +1243,5 @@ async function claimRoom(interaction, room) {
     ManageChannels: true,
     MoveMembers: true,
   });
-  await interaction.reply({
-    content: `You now own ${room.channel}.`,
-    ephemeral: true,
-  });
+  await respondVoice(interaction, `You now own ${room.channel}.`);
 }

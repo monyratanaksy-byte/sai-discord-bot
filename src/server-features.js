@@ -4972,7 +4972,7 @@ function canvasNeighbors(x, y, size) {
 function renderCanvasPng(guildData) {
   initCanvas(guildData);
   const size = guildData.canvas.size;
-  const cell = size <= 30 ? 18 : size <= 45 ? 14 : 10;
+  const cell = size <= 30 ? 18 : size <= 45 ? 14 : size <= 70 ? 10 : 7;
   const marginLeft = 42;
   const marginTop = 42;
   const marginRight = 14;
@@ -5110,7 +5110,7 @@ function encodePng(width, height, rgba) {
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     pngChunk('IHDR', Buffer.concat([uint32(width), uint32(height), Buffer.from([8, 6, 0, 0, 0])])),
-    pngChunk('IDAT', zlib.deflateSync(raw)),
+    pngChunk('IDAT', zlib.deflateSync(raw, { level: 1 })),
     pngChunk('IEND', Buffer.alloc(0)),
   ]);
 }

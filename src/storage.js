@@ -10,7 +10,9 @@ const defaultData = {
 };
 
 let cachedData;
-let writeQueue = Promise.resolve();
+let writeInFlight = false;
+let writeAgain = false;
+let writeWaiters = [];
 
 export async function loadData() {
   if (cachedData) return cachedData;
@@ -34,12 +36,35 @@ export async function loadData() {
 export async function saveData() {
   if (!cachedData) cachedData = structuredClone(defaultData);
 
-  writeQueue = writeQueue.then(async () => {
-    await mkdir(dataDir, { recursive: true });
-    await writeFile(dataFile, `${JSON.stringify(cachedData, null, 2)}\n`);
-  });
+  return new Promise((resolve, reject) => {
+    writeWaiters.push({ resolve, reject });
+    writeAgain = true;
 
-  return writeQueue;
+    if (!writeInFlight) {
+      void flushSaveQueue();
+    }
+  });
+}
+
+async function flushSaveQueue() {
+  writeInFlight = true;
+
+  while (writeAgain) {
+    writeAgain = false;
+    const waiters = writeWaiters;
+    writeWaiters = [];
+
+    try {
+      await mkdir(dataDir, { recursive: true });
+      const snapshot = `${JSON.stringify(cachedData)}\n`;
+      await writeFile(dataFile, snapshot);
+      for (const waiter of waiters) waiter.resolve();
+    } catch (error) {
+      for (const waiter of waiters) waiter.reject(error);
+    }
+  }
+
+  writeInFlight = false;
 }
 
 export async function getGuildData(guildId) {
