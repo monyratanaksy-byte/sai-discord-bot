@@ -111,7 +111,7 @@ const helpCategories = [
   ['general', 'General', 'Start here: profiles, guide, polls, and basic tools.', '🏠', ['ping', 'help', 'guide', 'userinfo', 'profile', 'poll', 'afk']],
   ['voice', 'Voice Rooms', 'Join-to-create rooms, owner controls, trust lists, and bans.', '🎧', ['roomtrust', 'roomban']],
   ['community', 'Community', 'Tickets, confessions, snipes, activity feeds, and social tools.', '💬', ['ticket', 'confess', 'snipe', 'editsnipe', 'activity']],
-  ['economy', 'Economy', 'Coins, rewards, streaks, gambling, shop perks, and leaderboards.', '🪙', ['rank', 'balance', 'daily', 'weekly', 'streak', 'gamble', 'givecoins', 'rob', 'rate', 'leaderboard', 'coinleaderboard', 'vcleaderboard', 'shop']],
+  ['economy', 'Economy', 'Coins, rewards, streaks, gambling, shop perks, canvas, and leaderboards.', '🪙', ['rank', 'balance', 'daily', 'weekly', 'streak', 'gamble', 'givecoins', 'rob', 'rate', 'leaderboard', 'coinleaderboard', 'vcleaderboard', 'shop', 'canvas']],
   ['moderation', 'Moderation', 'Staff moderation tools for keeping the server clean.', '🛡️', ['mod', 'raid']],
   ['admin', 'Admin', 'Setup, server systems, roles, emoji, backup, analytics, and bot profile.', '⚙️', ['setup', 'testverify', 'senduser', 'sendverified', 'role', 'emoji', 'backup', 'analytics', 'invites', 'bot', 'admin', 'economy']],
   ['utilities', 'Utilities', 'Useful calculators and tools.', '🧭', ['coords']],

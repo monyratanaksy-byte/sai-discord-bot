@@ -90,6 +90,8 @@ export function createGuildData() {
       shopMessageId: null,
       casinoPoolChannelId: null,
       casinoPoolMessageId: null,
+      canvasChannelId: null,
+      canvasMessageId: null,
       automodEnabled: false,
       automodInviteLinks: true,
       automodMassMentions: true,
@@ -141,6 +143,12 @@ export function createGuildData() {
     },
     shops: {},
     shopPrivileges: {},
+    canvas: {
+      size: 30,
+      cost: 50,
+      pixels: {},
+      placements: [],
+    },
     backups: {},
   };
 }
@@ -178,6 +186,10 @@ function mergeDefaults(data) {
       roomAccess: {
         ...createGuildData().roomAccess,
         ...(guildData.roomAccess || {}),
+      },
+      canvas: {
+        ...createGuildData().canvas,
+        ...(guildData.canvas || {}),
       },
     };
   }
