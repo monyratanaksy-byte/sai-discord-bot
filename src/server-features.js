@@ -35,8 +35,8 @@ const hiddenCommandDeletes = new Set();
 const recentMessageTimes = new Map();
 const casinoPoolRefreshTimes = new Map();
 const canvasPlaceCostDefault = 50;
-const canvasSizeDefault = 30;
-const canvasMaxSize = 60;
+const canvasSizeDefault = 100;
+const canvasMaxSize = 100;
 const canvasColors = {
   red: '#ed4245',
   orange: '#f97316',
@@ -648,7 +648,7 @@ export const featureCommands = [
         .addIntegerOption((option) =>
           option
             .setName('size')
-            .setDescription('Canvas width/height, default 30.')
+            .setDescription('Canvas width/height, default 100.')
             .setMinValue(10)
             .setMaxValue(canvasMaxSize)
             .setRequired(false),
@@ -3148,6 +3148,7 @@ async function refreshShopPanel(guild) {
 }
 
 async function runCanvas(interaction) {
+  await interaction.deferReply({ ephemeral: true });
   const sub = interaction.options.getSubcommand();
   if (sub === 'setup') return runCanvasSetup(interaction);
   if (sub === 'view') return runCanvasView(interaction);
@@ -3158,11 +3159,10 @@ async function runCanvas(interaction) {
 
 async function runCanvasSetup(interaction) {
   if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-    await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
+    await interaction.editReply('Administrator permission is required.');
     return true;
   }
 
-  await interaction.deferReply({ ephemeral: true });
   const channel = interaction.options.getChannel('channel', true);
   const size = interaction.options.getInteger('size') || canvasSizeDefault;
   const cost = interaction.options.getInteger('cost') || canvasPlaceCostDefault;
@@ -3181,7 +3181,6 @@ async function runCanvasSetup(interaction) {
 }
 
 async function runCanvasView(interaction) {
-  await interaction.deferReply({ ephemeral: true });
   const guildData = await getGuildData(interaction.guildId);
   initCanvas(guildData);
   const payload = canvasPanelPayload(interaction.guild, guildData);
@@ -3199,7 +3198,7 @@ async function runCanvasStats(interaction) {
       return `${index + 1}. <@${entry.userId}> - **${entry.count}** pixel(s), biggest group **${income.biggestGroup}**, income **${income.reward}**/hr`;
     });
 
-  await interaction.reply({
+  await interaction.editReply({
     embeds: [
       new EmbedBuilder()
         .setColor(0x5865f2)
@@ -3211,13 +3210,11 @@ async function runCanvasStats(interaction) {
           { name: 'Placed Pixels', value: String(Object.keys(guildData.canvas.pixels || {}).length), inline: true },
         ),
     ],
-    ephemeral: true,
   });
   return true;
 }
 
 async function runCanvasClaim(interaction) {
-  await interaction.deferReply({ ephemeral: true });
   const now = Date.now();
   let result;
   await updateGuildData(interaction.guildId, (guildData) => {
