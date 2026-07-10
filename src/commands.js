@@ -110,7 +110,7 @@ export const commandMentionDescriptions = slashCommands.map((command) => ({
 const helpCategories = [
   ['general', 'General', 'Core commands and profile tools.', '🏠', ['ping', 'help', 'guide', 'userinfo', 'profile', 'poll', 'afk']],
   ['community', 'Community', 'Tickets, confessions, and server interaction.', '💬', ['ticket', 'confess', 'snipe', 'editsnipe', 'activity', 'roomtrust', 'roomban']],
-  ['economy', 'Economy', 'Levels, coins, shop, and rewards.', '🪙', ['rank', 'balance', 'daily', 'weekly', 'streak', 'gamble', 'givecoins', 'rob', 'rate', 'leaderboard', 'vcleaderboard', 'shop', 'economy']],
+  ['economy', 'Economy', 'Levels, coins, shop, and rewards.', '🪙', ['rank', 'balance', 'daily', 'weekly', 'streak', 'gamble', 'givecoins', 'rob', 'rate', 'leaderboard', 'coinleaderboard', 'vcleaderboard', 'shop', 'economy']],
   ['moderation', 'Moderation', 'Staff moderation tools.', '🛡️', ['mod']],
   ['admin', 'Admin', 'Setup, dashboard-connected systems, and server controls.', '⚙️', ['setup', 'testverify', 'senduser', 'sendverified', 'role', 'emoji', 'raid', 'backup', 'analytics', 'invites', 'bot', 'admin']],
   ['utilities', 'Utilities', 'Useful tools and calculators.', '🧭', ['coords']],

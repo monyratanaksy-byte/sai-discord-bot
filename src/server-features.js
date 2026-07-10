@@ -490,6 +490,9 @@ export const featureCommands = [
     .setName('leaderboard')
     .setDescription('Show the server XP leaderboard.'),
   new SlashCommandBuilder()
+    .setName('coinleaderboard')
+    .setDescription('Show the richest members by coin balance.'),
+  new SlashCommandBuilder()
     .setName('economy')
     .setDescription('Admin XP and coin controls.')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -707,6 +710,7 @@ export async function runFeatureSlashCommand(interaction) {
   if (interaction.commandName === 'activity') return runActivity(interaction);
   if (interaction.commandName === 'vcleaderboard') return runVoiceLeaderboard(interaction);
   if (interaction.commandName === 'leaderboard') return runLeaderboard(interaction);
+  if (interaction.commandName === 'coinleaderboard') return runCoinLeaderboard(interaction);
   if (interaction.commandName === 'economy') return runEconomy(interaction);
   if (interaction.commandName === 'analytics') return runAnalytics(interaction);
   if (interaction.commandName === 'invites') return runInvites(interaction);
@@ -1892,7 +1896,20 @@ async function runDaily(interaction) {
     return true;
   }
 
-  await interaction.editReply(`Daily claimed: +${result.reward} coins. Your balance is now ${result.coins} coins.`);
+  const payload = {
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setTitle('Daily Reward Claimed')
+        .setDescription(`${interaction.user} claimed **${result.reward} coins**.`)
+        .addFields({ name: 'Balance', value: `${result.coins} coins`, inline: true })
+        .setFooter({ text: 'Use /streak to keep your daily streak alive too.' })
+        .setTimestamp(),
+    ],
+    allowedMentions: { users: [interaction.user.id] },
+  };
+  await interaction.editReply('Daily claimed.');
+  await interaction.channel?.send(payload).catch(() => interaction.followUp({ ...payload, ephemeral: false }).catch(() => {}));
   return true;
 }
 
@@ -2709,6 +2726,34 @@ async function runLeaderboard(interaction) {
     .map(([userId, progress], index) => `${index + 1}. <@${userId}> - level ${progress.level}, ${progress.xp} XP`);
   await interaction.reply({
     embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('XP Leaderboard').setDescription(rows.join('\n') || 'No XP yet.')],
+  });
+  return true;
+}
+
+async function runCoinLeaderboard(interaction) {
+  const guildData = await getGuildData(interaction.guildId);
+  const rows = Object.entries(guildData.levels || {})
+    .map(([userId, progress]) => ({
+      userId,
+      coins: Number(progress.coins || 0),
+      level: Number(progress.level || 1),
+      xp: Number(progress.xp || 0),
+      robProtection: getRobProtectionCount(guildData, userId),
+    }))
+    .filter((entry) => entry.coins > 0)
+    .sort((a, b) => b.coins - a.coins)
+    .slice(0, 10)
+    .map((entry, index) =>
+      `${index + 1}. <@${entry.userId}> - **${entry.coins}** coins • level ${entry.level} • ${entry.robProtection} protection`,
+    );
+
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xf1c40f)
+        .setTitle('Coin Leaderboard')
+        .setDescription(rows.join('\n') || 'No coin balances yet.'),
+    ],
   });
   return true;
 }
