@@ -53,7 +53,6 @@ const client = new Client({
 
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`S.A.I is online as ${readyClient.user.tag}`);
-  startLagMonitor();
   initFeatures(readyClient).catch((error) => {
     console.error('Feature initialization failed:', error);
   });
@@ -165,11 +164,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await handleFeatureModal(interaction);
     }
   } catch (error) {
-    if (error?.code === 10062) {
-      console.warn(`Expired Discord interaction ignored: ${interaction.type}${interaction.commandName ? ` /${interaction.commandName}` : ''}`);
-      return;
-    }
-
     console.error('Interaction failed:', error);
 
     const message = {
@@ -198,16 +192,4 @@ async function registerGuildCommands() {
     body: slashCommands,
   });
   console.log(`Registered ${slashCommands.length} slash commands for guild ${config.guildId}.`);
-}
-
-function startLagMonitor() {
-  let expected = Date.now() + 1000;
-  setInterval(() => {
-    const now = Date.now();
-    const lag = now - expected;
-    if (lag > 2500) {
-      console.warn(`Event loop lag detected: ${Math.round(lag)}ms. Interactions may expire if this keeps happening.`);
-    }
-    expected = now + 1000;
-  }, 1000).unref();
 }

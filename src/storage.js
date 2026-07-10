@@ -10,9 +10,7 @@ const defaultData = {
 };
 
 let cachedData;
-let writeInFlight = false;
-let writeAgain = false;
-let writeWaiters = [];
+let writeQueue = Promise.resolve();
 
 export async function loadData() {
   if (cachedData) return cachedData;
@@ -36,35 +34,12 @@ export async function loadData() {
 export async function saveData() {
   if (!cachedData) cachedData = structuredClone(defaultData);
 
-  return new Promise((resolve, reject) => {
-    writeWaiters.push({ resolve, reject });
-    writeAgain = true;
-
-    if (!writeInFlight) {
-      void flushSaveQueue();
-    }
+  writeQueue = writeQueue.then(async () => {
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(dataFile, `${JSON.stringify(cachedData, null, 2)}\n`);
   });
-}
 
-async function flushSaveQueue() {
-  writeInFlight = true;
-
-  while (writeAgain) {
-    writeAgain = false;
-    const waiters = writeWaiters;
-    writeWaiters = [];
-
-    try {
-      await mkdir(dataDir, { recursive: true });
-      const snapshot = `${JSON.stringify(cachedData)}\n`;
-      await writeFile(dataFile, snapshot);
-      for (const waiter of waiters) waiter.resolve();
-    } catch (error) {
-      for (const waiter of waiters) waiter.reject(error);
-    }
-  }
-
-  writeInFlight = false;
+  return writeQueue;
 }
 
 export async function getGuildData(guildId) {
@@ -115,8 +90,6 @@ export function createGuildData() {
       shopMessageId: null,
       casinoPoolChannelId: null,
       casinoPoolMessageId: null,
-      canvasChannelId: null,
-      canvasMessageId: null,
       automodEnabled: false,
       automodInviteLinks: true,
       automodMassMentions: true,
@@ -168,12 +141,6 @@ export function createGuildData() {
     },
     shops: {},
     shopPrivileges: {},
-    canvas: {
-      size: 30,
-      cost: 50,
-      pixels: {},
-      placements: [],
-    },
     backups: {},
   };
 }
@@ -211,10 +178,6 @@ function mergeDefaults(data) {
       roomAccess: {
         ...createGuildData().roomAccess,
         ...(guildData.roomAccess || {}),
-      },
-      canvas: {
-        ...createGuildData().canvas,
-        ...(guildData.canvas || {}),
       },
     };
   }

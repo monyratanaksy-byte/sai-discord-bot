@@ -108,13 +108,12 @@ export const commandMentionDescriptions = slashCommands.map((command) => ({
 }));
 
 const helpCategories = [
-  ['general', 'General', 'Start here: profiles, guide, polls, and basic tools.', '🏠', ['ping', 'help', 'guide', 'userinfo', 'profile', 'poll', 'afk']],
-  ['voice', 'Voice Rooms', 'Join-to-create rooms, owner controls, trust lists, and bans.', '🎧', ['roomtrust', 'roomban']],
-  ['community', 'Community', 'Tickets, confessions, snipes, activity feeds, and social tools.', '💬', ['ticket', 'confess', 'snipe', 'editsnipe', 'activity']],
-  ['economy', 'Economy', 'Coins, rewards, streaks, gambling, shop perks, canvas, and leaderboards.', '🪙', ['rank', 'balance', 'daily', 'weekly', 'streak', 'gamble', 'givecoins', 'rob', 'rate', 'leaderboard', 'coinleaderboard', 'vcleaderboard', 'shop', 'canvas']],
-  ['moderation', 'Moderation', 'Staff moderation tools for keeping the server clean.', '🛡️', ['mod', 'raid']],
-  ['admin', 'Admin', 'Setup, server systems, roles, emoji, backup, analytics, and bot profile.', '⚙️', ['setup', 'testverify', 'senduser', 'sendverified', 'role', 'emoji', 'backup', 'analytics', 'invites', 'bot', 'admin', 'economy']],
-  ['utilities', 'Utilities', 'Useful calculators and tools.', '🧭', ['coords']],
+  ['general', 'General', 'Core commands and profile tools.', '🏠', ['ping', 'help', 'guide', 'userinfo', 'profile', 'poll', 'afk']],
+  ['community', 'Community', 'Tickets, confessions, and server interaction.', '💬', ['ticket', 'confess', 'snipe', 'editsnipe', 'activity', 'roomtrust', 'roomban']],
+  ['economy', 'Economy', 'Levels, coins, shop, and rewards.', '🪙', ['rank', 'balance', 'daily', 'weekly', 'streak', 'gamble', 'givecoins', 'rob', 'rate', 'leaderboard', 'coinleaderboard', 'vcleaderboard', 'shop', 'economy']],
+  ['moderation', 'Moderation', 'Staff moderation tools.', '🛡️', ['mod']],
+  ['admin', 'Admin', 'Setup, dashboard-connected systems, and server controls.', '⚙️', ['setup', 'testverify', 'senduser', 'sendverified', 'role', 'emoji', 'raid', 'backup', 'analytics', 'invites', 'bot', 'admin']],
+  ['utilities', 'Utilities', 'Useful tools and calculators.', '🧭', ['coords']],
 ];
 
 export async function runSlashCommand(interaction) {
@@ -124,7 +123,7 @@ export async function runSlashCommand(interaction) {
   }
 
   if (interaction.commandName === 'help') {
-    await interaction.reply(buildHelpPayload(interaction, interaction.options.getString('category') || 'general', 0));
+    await interaction.reply({ ...buildHelpPayload(interaction, interaction.options.getString('category') || 'general', 0), ephemeral: true });
     return;
   }
 
@@ -184,7 +183,7 @@ export async function runPrefixCommand(message, prefix) {
   }
 
   if (commandName === 'help') {
-    await message.reply(buildHelpPayload({ member: message.member, guild: message.guild, client: message.client }));
+    await message.reply({ embeds: [buildHelpEmbed({ member: message.member, guild: message.guild })] });
     return true;
   }
 
@@ -223,9 +222,6 @@ export async function handleHelpComponent(interaction) {
   } else if (action === 'prev') {
     category = helpCategories[(currentIndex - 1 + helpCategories.length) % helpCategories.length][0];
     page = 0;
-  } else if (action === 'home') {
-    category = 'general';
-    page = 0;
   }
 
   await interaction.update(buildHelpPayload(interaction, category, page));
@@ -251,62 +247,31 @@ function buildHelpEmbed(context, selectedCategory = 'general', page = 0) {
   const pages = chunkRows(rows, 8);
   const pageIndex = Math.min(Math.max(page, 0), Math.max(pages.length - 1, 0));
   const visibleRows = pages[pageIndex] || [];
-  const totalCommands = slashCommands.length;
-  const categorySummary = helpCategories
-    .map(([value, label, , categoryEmoji]) => `${value === key ? '▸' : ' '} ${categoryEmoji} ${label}`)
-    .join('\n');
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle(`${emoji} ${name}${locked ? ' · locked' : ''}`)
     .setDescription([
-      `**${summary}**`,
-      locked ? 'You can see this section, but you may not have permission to run every command here.' : 'Use the selector and buttons below to browse S.A.I commands.',
+      summary,
       '',
       visibleRows.join('\n') || 'No commands in this section.',
     ].join('\n'))
     .addFields(
-      {
-        name: 'Featured',
-        value: [
-          '`/daily` public coin claim',
-          '`/streak` public streak flex',
-          '`/shop view` buy roles and perks',
-          '`/coinleaderboard` richest members',
-          '`/guide` quick start panel',
-        ].join('\n'),
-        inline: true,
-      },
-      {
-        name: 'Sections',
-        value: `\`\`\`txt\n${categorySummary}\n\`\`\``,
-        inline: true,
-      },
-      {
-        name: 'Boosters',
-        value: 'Server boosters receive `1.5x` XP and coins from messages, voice, daily, weekly, and streak rewards.',
-        inline: false,
-      },
+      { name: 'Navigation', value: 'Use the menu below to switch sections. Use Next/Previous to browse quickly.' },
+      { name: 'Booster Rewards', value: 'Server boosters receive `1.5x` XP and coins from messages, voice, and daily rewards.' },
     )
-    .setFooter({ text: `${totalCommands} commands loaded · ${emoji} Page ${pageIndex + 1}/${Math.max(pages.length, 1)} · /help is public` })
-    .setTimestamp();
+    .setFooter({ text: `${emoji} Page ${pageIndex + 1}/${Math.max(pages.length, 1)} · Dashboard handles advanced setup and logs.` });
   const botIcon = context.client?.user?.displayAvatarURL?.({ size: 128 });
-  embed.setAuthor(botIcon ? { name: 'S.A.I Help Center', iconURL: botIcon } : { name: 'S.A.I Help Center' });
+  embed.setAuthor(botIcon ? { name: 'S.A.I Command Center', iconURL: botIcon } : { name: 'S.A.I Command Center' });
   return embed;
 }
 
 function helpComponents(selectedCategory, page) {
-  const category = helpCategories.find(([key]) => key === selectedCategory) || helpCategories[0];
-  const rows = formatHelpRows(category[4]);
-  const pages = chunkRows(rows, 8);
-  const pageCount = Math.max(pages.length, 1);
-  const pageIndex = Math.min(Math.max(page, 0), pageCount - 1);
-
   return [
     new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
-        .setCustomId(`help:select:${selectedCategory}:${pageIndex}`)
-        .setPlaceholder('Pick a help section')
+        .setCustomId(`help:select:${selectedCategory}:${page}`)
+        .setPlaceholder('Pick a section')
         .addOptions(helpCategories.map(([value, label, description, emoji]) => ({
           label,
           value,
@@ -317,21 +282,15 @@ function helpComponents(selectedCategory, page) {
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`help:prev:${selectedCategory}:${pageIndex}`)
+        .setCustomId(`help:prev:${selectedCategory}:${page}`)
         .setLabel('Previous')
         .setEmoji('⬅️')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
-        .setCustomId(`help:next:${selectedCategory}:${pageIndex}`)
+        .setCustomId(`help:next:${selectedCategory}:${page}`)
         .setLabel('Next')
         .setEmoji('➡️')
         .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`help:home:${selectedCategory}:${pageIndex}`)
-        .setLabel('Home')
-        .setEmoji('🏠')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(selectedCategory === 'general'),
     ),
   ];
 }
