@@ -34,7 +34,6 @@ import {
   runUserContextCommand,
   runUserUtilityChatInput,
 } from './user-utilities.js';
-import { initDashboardSync, recordDashboardMessage } from './dashboard-sync.js';
 
 requireConfig(['token', 'joinToCreateChannelId']);
 
@@ -63,7 +62,7 @@ client.once(Events.ClientReady, (readyClient) => {
   initUserUtilities(readyClient).catch((error) => {
     console.error('User utility initialization failed:', error);
   });
-  initDashboardSync(readyClient);
+  console.log('S.A.I dashboard sync disabled.');
   registerGuildCommands().catch((error) => {
     console.error('Slash command auto-registration failed:', error);
   });
@@ -75,8 +74,6 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
-  recordDashboardMessage(message);
-
   await handleFeatureMessageCreate(message).catch((error) => {
     console.error('Feature message handler failed:', error);
   });

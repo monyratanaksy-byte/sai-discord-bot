@@ -1869,6 +1869,7 @@ async function runBalance(interaction) {
 }
 
 async function runDaily(interaction) {
+  await interaction.deferReply({ ephemeral: true });
   let result;
   await updateGuildData(interaction.guildId, (guildData) => {
     guildData.economy.dailyClaims ||= {};
@@ -1887,21 +1888,16 @@ async function runDaily(interaction) {
   });
 
   if (!result.available) {
-    await interaction.reply({
-      content: `You already claimed your daily. Try again <t:${Math.floor(result.nextAt / 1000)}:R>.`,
-      ephemeral: true,
-    });
+    await interaction.editReply(`You already claimed your daily. Try again <t:${Math.floor(result.nextAt / 1000)}:R>.`);
     return true;
   }
 
-  await interaction.reply({
-    content: `Daily claimed: +${result.reward} coins. Your balance is now ${result.coins} coins.`,
-    ephemeral: true,
-  });
+  await interaction.editReply(`Daily claimed: +${result.reward} coins. Your balance is now ${result.coins} coins.`);
   return true;
 }
 
 async function runWeekly(interaction) {
+  await interaction.deferReply({ ephemeral: true });
   let result;
   await updateGuildData(interaction.guildId, (guildData) => {
     guildData.economy.weeklyClaims ||= {};
@@ -1920,14 +1916,11 @@ async function runWeekly(interaction) {
   });
 
   if (!result.available) {
-    await interaction.reply({
-      content: `You already claimed your weekly. Try again <t:${Math.floor(result.nextAt / 1000)}:R>.`,
-      ephemeral: true,
-    });
+    await interaction.editReply(`You already claimed your weekly. Try again <t:${Math.floor(result.nextAt / 1000)}:R>.`);
     return true;
   }
 
-  await interaction.reply({
+  const payload = {
     embeds: [
       new EmbedBuilder()
         .setColor(0x57f287)
@@ -1937,11 +1930,15 @@ async function runWeekly(interaction) {
         .setFooter({ text: 'Come back next week for another reward.' })
         .setTimestamp(),
     ],
-  });
+    allowedMentions: { users: [interaction.user.id] },
+  };
+  await interaction.editReply('Weekly claimed.');
+  await interaction.channel?.send(payload).catch(() => interaction.followUp({ ...payload, ephemeral: false }).catch(() => {}));
   return true;
 }
 
 async function runStreak(interaction) {
+  await interaction.deferReply({ ephemeral: true });
   const today = dayNumber();
   let result;
 
@@ -1967,14 +1964,11 @@ async function runStreak(interaction) {
   });
 
   if (!result.ok) {
-    await interaction.reply({
-      content: `You already claimed today's streak. Current streak: ${result.count} day(s). Try again <t:${Math.floor(result.nextAt / 1000)}:R>.`,
-      ephemeral: true,
-    });
+    await interaction.editReply(`You already claimed today's streak. Current streak: ${result.count} day(s). Try again <t:${Math.floor(result.nextAt / 1000)}:R>.`);
     return true;
   }
 
-  await interaction.reply({
+  const payload = {
     embeds: [
       new EmbedBuilder()
         .setColor(0xf1c40f)
@@ -1986,7 +1980,10 @@ async function runStreak(interaction) {
           { name: 'Balance', value: `${result.balance} coins`, inline: true },
         ),
     ],
-  });
+    allowedMentions: { users: [interaction.user.id] },
+  };
+  await interaction.editReply('Streak claimed.');
+  await interaction.channel?.send(payload).catch(() => interaction.followUp({ ...payload, ephemeral: false }).catch(() => {}));
   return true;
 }
 
