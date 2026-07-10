@@ -663,7 +663,8 @@ export const featureCommands = [
         ),
     )
     .addSubcommand((sub) => sub.setName('view').setDescription('View the current canvas.'))
-    .addSubcommand((sub) => sub.setName('stats').setDescription('Show canvas ownership stats.')),
+    .addSubcommand((sub) => sub.setName('stats').setDescription('Show canvas ownership stats.'))
+    .addSubcommand((sub) => sub.setName('claim').setDescription('Claim income from owned connected canvas territory.')),
   new SlashCommandBuilder()
     .setName('emoji')
     .setDescription('Admin emoji tools.')
@@ -3151,6 +3152,7 @@ async function runCanvas(interaction) {
   if (sub === 'setup') return runCanvasSetup(interaction);
   if (sub === 'view') return runCanvasView(interaction);
   if (sub === 'stats') return runCanvasStats(interaction);
+  if (sub === 'claim') return runCanvasClaim(interaction);
   return false;
 }
 
@@ -3192,7 +3194,10 @@ async function runCanvasStats(interaction) {
   initCanvas(guildData);
   const owners = canvasOwnerCounts(guildData)
     .slice(0, 10)
-    .map((entry, index) => `${index + 1}. <@${entry.userId}> - **${entry.count}** pixel(s)`);
+    .map((entry, index) => {
+      const income = calculateCanvasIncome(guildData, entry.userId);
+      return `${index + 1}. <@${entry.userId}> - **${entry.count}** pixel(s), biggest group **${income.biggestGroup}**, income **${income.reward}**/hr`;
+    });
 
   await interaction.reply({
     embeds: [
@@ -3208,6 +3213,45 @@ async function runCanvasStats(interaction) {
     ],
     ephemeral: true,
   });
+  return true;
+}
+
+async function runCanvasClaim(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+  const now = Date.now();
+  let result;
+  await updateGuildData(interaction.guildId, (guildData) => {
+    initCanvas(guildData);
+    guildData.canvas.claims ||= {};
+    const lastClaim = Number(guildData.canvas.claims[interaction.user.id] || 0);
+    const cooldownMs = 60 * 60_000;
+    if (now - lastClaim < cooldownMs) {
+      result = { ok: false, nextAt: lastClaim + cooldownMs };
+      return;
+    }
+
+    const income = calculateCanvasIncome(guildData, interaction.user.id);
+    if (income.reward < 1) {
+      result = { ok: false, reason: 'You do not own any canvas pixels yet.' };
+      return;
+    }
+
+    getUserProgress(guildData, interaction.user.id).coins += income.reward;
+    guildData.canvas.claims[interaction.user.id] = now;
+    result = { ok: true, ...income };
+  });
+
+  if (!result.ok) {
+    await interaction.editReply(result.reason || `You can claim canvas income again <t:${Math.floor(result.nextAt / 1000)}:R>.`);
+    return true;
+  }
+
+  await interaction.editReply([
+    `Canvas income claimed: **${result.reward} coins**.`,
+    `Owned pixels: ${result.pixels}`,
+    `Connected groups: ${result.groups}`,
+    `Biggest connected group: ${result.biggestGroup}`,
+  ].join('\n'));
   return true;
 }
 
@@ -3385,7 +3429,9 @@ async function showCanvasHelp(interaction) {
           '',
           'Click **Place Pixel**, type X, Y, and a color.',
           'Click **Inspect Pixel** to see who owns a coordinate.',
-          'Use `/canvas stats` to see top pixel owners.',
+          'Same-owner pixels that touch connect into outlined territories.',
+          'Use `/canvas claim` once per hour to earn from owned pixels and connected groups.',
+          'Use `/canvas stats` to see top pixel owners and income.',
         ].join('\n')),
     ],
     ephemeral: true,
@@ -3435,7 +3481,10 @@ function canvasPanelPayload(guild, guildData) {
   const attachment = new AttachmentBuilder(renderCanvasPng(guildData), { name: 'sai-canvas.png' });
   const owners = canvasOwnerCounts(guildData).slice(0, 5);
   const ownerText = owners.length
-    ? owners.map((entry, index) => `${index + 1}. <@${entry.userId}> - ${entry.count}`).join('\n')
+    ? owners.map((entry, index) => {
+      const income = calculateCanvasIncome(guildData, entry.userId);
+      return `${index + 1}. <@${entry.userId}> - ${entry.count} px • ${income.reward}/hr`;
+    }).join('\n')
     : 'No owners yet.';
 
   return {
@@ -3449,6 +3498,7 @@ function canvasPanelPayload(guild, guildData) {
           { name: 'Pixel Cost', value: `${guildData.canvas.cost} coins`, inline: true },
           { name: 'Placed', value: String(Object.keys(guildData.canvas.pixels || {}).length), inline: true },
           { name: 'Top Owners', value: ownerText, inline: false },
+          { name: 'Territory Income', value: 'Connected same-owner pixels form outlined territory. Bigger connected groups earn more with `/canvas claim`.', inline: false },
           { name: 'How to know who owns a pixel', value: 'Click **Inspect Pixel** and type the X/Y coordinate.', inline: false },
         )
         .setImage('attachment://sai-canvas.png')
@@ -4874,6 +4924,54 @@ function canvasOwnerCounts(guildData) {
     .sort((a, b) => b.count - a.count);
 }
 
+function calculateCanvasIncome(guildData, userId) {
+  const components = canvasConnectedComponents(guildData, userId);
+  const pixels = components.reduce((sum, group) => sum + group.length, 0);
+  const biggestGroup = components.reduce((max, group) => Math.max(max, group.length), 0);
+  const groupBonus = components.reduce((sum, group) => sum + Math.floor(group.length ** 1.25), 0);
+  return {
+    pixels,
+    groups: components.length,
+    biggestGroup,
+    reward: pixels * 2 + groupBonus,
+  };
+}
+
+function canvasConnectedComponents(guildData, userId) {
+  const size = guildData.canvas?.size || canvasSizeDefault;
+  const visited = new Set();
+  const groups = [];
+  for (const [key, pixel] of Object.entries(guildData.canvas?.pixels || {})) {
+    if (pixel.ownerId !== userId || visited.has(key)) continue;
+    const group = [];
+    const stack = [key];
+    visited.add(key);
+    while (stack.length) {
+      const current = stack.pop();
+      group.push(current);
+      const [x, y] = current.split(',').map(Number);
+      for (const [nx, ny] of canvasNeighbors(x, y, size)) {
+        const nextKey = canvasKey(nx, ny);
+        if (visited.has(nextKey)) continue;
+        if (guildData.canvas.pixels[nextKey]?.ownerId !== userId) continue;
+        visited.add(nextKey);
+        stack.push(nextKey);
+      }
+    }
+    groups.push(group);
+  }
+  return groups.sort((a, b) => b.length - a.length);
+}
+
+function canvasNeighbors(x, y, size) {
+  return [
+    [x - 1, y],
+    [x + 1, y],
+    [x, y - 1],
+    [x, y + 1],
+  ].filter(([nx, ny]) => nx >= 0 && ny >= 0 && nx < size && ny < size);
+}
+
 function renderCanvasPng(guildData) {
   initCanvas(guildData);
   const size = guildData.canvas.size;
@@ -4897,13 +4995,15 @@ function renderCanvasPng(guildData) {
     }
   }
 
-  const gridColor = [203, 213, 225, 255];
+  const gridColor = [226, 232, 240, 255];
   for (let i = 0; i <= size; i += 1) {
     const x = marginLeft + i * cell;
     fillRect(pixels, width, x, marginTop, 1, size * cell, gridColor);
     const y = marginTop + i * cell;
     fillRect(pixels, width, marginLeft, y, size * cell, 1, gridColor);
   }
+
+  drawCanvasTerritoryBorders(pixels, width, guildData, marginLeft, marginTop, cell);
 
   const textColor = [15, 23, 42, 255];
   for (let i = 0; i < size; i += Math.max(1, Math.ceil(size / 15))) {
@@ -4914,6 +5014,37 @@ function renderCanvasPng(guildData) {
   drawTinyText(pixels, width, 4, marginTop - 18, 'Y', [79, 70, 229, 255], 2);
 
   return encodePng(width, height, pixels);
+}
+
+function drawCanvasTerritoryBorders(buffer, width, guildData, marginLeft, marginTop, cell) {
+  const size = guildData.canvas.size;
+  const borderColor = [15, 23, 42, 255];
+  const borderWidth = cell >= 14 ? 2 : 1;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const pixel = guildData.canvas.pixels[canvasKey(x, y)];
+      if (!pixel?.ownerId) continue;
+      const left = marginLeft + x * cell;
+      const top = marginTop + y * cell;
+      const owner = pixel.ownerId;
+      const sides = [
+        ['top', x, y - 1],
+        ['right', x + 1, y],
+        ['bottom', x, y + 1],
+        ['left', x - 1, y],
+      ];
+      for (const [side, nx, ny] of sides) {
+        const neighbor = nx >= 0 && ny >= 0 && nx < size && ny < size
+          ? guildData.canvas.pixels[canvasKey(nx, ny)]
+          : null;
+        if (neighbor?.ownerId === owner) continue;
+        if (side === 'top') fillRect(buffer, width, left, top, cell, borderWidth, borderColor);
+        if (side === 'right') fillRect(buffer, width, left + cell - borderWidth, top, borderWidth, cell, borderColor);
+        if (side === 'bottom') fillRect(buffer, width, left, top + cell - borderWidth, cell, borderWidth, borderColor);
+        if (side === 'left') fillRect(buffer, width, left, top, borderWidth, cell, borderColor);
+      }
+    }
+  }
 }
 
 function hexToRgba(hex) {
