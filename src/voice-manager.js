@@ -359,6 +359,10 @@ export async function handleVoiceButton(interaction) {
     await showUserPicker(interaction, room, 'deny');
   }
   } catch (error) {
+    if (error?.code === 10062) {
+      console.warn(`Expired voice button interaction ignored: ${interaction.customId}`);
+      return;
+    }
     console.error('Voice button interaction failed:', error);
     await replyVoiceFailure(interaction);
   }
@@ -589,6 +593,10 @@ export async function handleVoiceModal(interaction) {
     await interaction.editReply(`${member} can no longer join this room.`);
   }
   } catch (error) {
+    if (error?.code === 10062) {
+      console.warn(`Expired voice modal interaction ignored: ${interaction.customId}`);
+      return;
+    }
     console.error('Voice modal interaction failed:', error);
     await replyVoiceFailure(interaction);
   }
@@ -1102,7 +1110,10 @@ async function showKickPicker(interaction, room) {
 }
 
 async function sendTemporaryPicker(interaction, payload) {
-  await interaction.reply({
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ ephemeral: true });
+  }
+  await interaction.editReply({
     ...payload,
     allowedMentions: { parse: [] },
   });
