@@ -223,6 +223,9 @@ export async function handleHelpComponent(interaction) {
   } else if (action === 'prev') {
     category = helpCategories[(currentIndex - 1 + helpCategories.length) % helpCategories.length][0];
     page = 0;
+  } else if (action === 'home') {
+    category = 'general';
+    page = 0;
   }
 
   await interaction.update(buildHelpPayload(interaction, category, page));
@@ -324,7 +327,7 @@ function helpComponents(selectedCategory, page) {
         .setEmoji('➡️')
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
-        .setCustomId(`help:select:general:0`)
+        .setCustomId(`help:home:${selectedCategory}:${pageIndex}`)
         .setLabel('Home')
         .setEmoji('🏠')
         .setStyle(ButtonStyle.Secondary)
